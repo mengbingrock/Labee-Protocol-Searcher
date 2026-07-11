@@ -1,0 +1,50 @@
+{
+  "name": "@mengbingrock/mcp-protocols",
+  "version": "0.1.0",
+  "description": "MCP stdio server + CLI that searches lab-protocol journals and reagent vendors, returning ranked links per source. Zero runtime dependencies.",
+  "type": "module",
+  "bin": {
+    "mcp-protocols": "./dist/index.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types src/index.ts",
+    "build": "tsdown",
+    "start": "node dist/index.mjs",
+    "search": "node --experimental-strip-types src/index.ts --query",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "codex",
+    "protocols",
+    "bioinformatics",
+    "lab-protocols",
+    "reagents"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mengbingrock/mcp-protocols.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.13",
+    "tsdown": "^0.20.3",
+    "typescript": "^5.7.3",
+    "vitest": "^4.0.0"
+  }
+}
