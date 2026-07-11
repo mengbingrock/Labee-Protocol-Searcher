@@ -52,4 +52,105 @@ describe("getProtocolFulltext", () => {
     const bad = (async () => new Response("no", { status: 403 })) as unknown as typeof fetch;
     await expect(getProtocolFulltext("10.1/x", { fetchImpl: bad })).rejects.toThrow(/Europe PMC HTTP 403/);
   });
+
+  it("tags every outcome with a machine-readable status footer", async () => {
+    const ok = router(searchHit({ pmcid: "PMC1" }));
+    expect(await getProtocolFulltext("PMC1", { fetchImpl: ok })).toContain("_status: ok_");
+    const none = router(searchHit({ doi: "10.1/paywalled" }));
+    expect(await getProtocolFulltext("10.1/paywalled", { fetchImpl: none })).toContain(
+      "_status: no-open-fulltext_",
+    );
+  });
+});
+
+// A body with two sections; the parser should split them by <title>.
+const MULTISEC_XML =
+  "<article><body>" +
+  "<sec><title>Introduction</title><p>Background prose.</p></sec>" +
+  "<sec><title>Methods</title><p>Add 5 uL enzyme; incubate 37C.</p></sec>" +
+  "</body></article>";
+
+describe("getProtocolFulltext — section-aware rendering", () => {
+  it("returns only the requested section", async () => {
+    const f = router(searchHit({ pmcid: "PMC7" }), MULTISEC_XML);
+    const out = await getProtocolFulltext("PMC7", { fetchImpl: f, section: "methods" });
+    expect(out).toContain("## Methods");
+    expect(out).toContain("incubate 37C");
+    expect(out).not.toContain("Background prose");
+  });
+
+  it("lists available sections when the filter matches none", async () => {
+    const f = router(searchHit({ pmcid: "PMC7" }), MULTISEC_XML);
+    const out = await getProtocolFulltext("PMC7", { fetchImpl: f, section: "nope" });
+    expect(out).toContain("No section matching");
+    expect(out).toContain("Introduction");
+    expect(out).toContain("Methods");
+  });
+
+  it("renders a section TOC when there are multiple sections", async () => {
+    const f = router(searchHit({ pmcid: "PMC7" }), MULTISEC_XML);
+    const out = await getProtocolFulltext("PMC7", { fetchImpl: f });
+    expect(out).toContain("Sections:");
+    expect(out).toContain("## Introduction");
+    expect(out).toContain("## Methods");
+  });
+});
+
+describe("getProtocolFulltext — Unpaywall fallback", () => {
+  it("recovers a PMC copy via Unpaywall when Europe PMC has no PMCID", async () => {
+    const f = (async (url: string) => {
+      if (url.includes("/search")) return new Response(searchHit({ doi: "10.5/oa" }), { status: 200 });
+      if (url.includes("api.unpaywall.org")) {
+        return new Response(
+          JSON.stringify({
+            is_oa: true,
+            best_oa_location: { url: "https://europepmc.org/articles/PMC555", license: "cc-by" },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(FULLTEXT_XML, { status: 200 }); // the recovered fullTextXML
+    }) as unknown as typeof fetch;
+    const out = await getProtocolFulltext("10.5/oa", { fetchImpl: f });
+    expect(out).toContain("Unpaywall");
+    expect(out).toContain("PMC555");
+    expect(out).toContain("Step 1: mix the reagents.");
+    expect(out).toContain("_status: ok_");
+  });
+
+  it("extracts an OA HTML landing page when Unpaywall has no PMC copy", async () => {
+    const f = (async (url: string) => {
+      if (url.includes("/search")) return new Response(searchHit({ doi: "10.5/html" }), { status: 200 });
+      if (url.includes("api.unpaywall.org")) {
+        return new Response(
+          JSON.stringify({ is_oa: true, best_oa_location: { url: "https://oa.example/paper", license: "cc-by" } }),
+          { status: 200 },
+        );
+      }
+      return new Response("<html><body><article><p>Extracted OA body text.</p></article></body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+    const out = await getProtocolFulltext("10.5/html", { fetchImpl: f });
+    expect(out).toContain("best-effort extraction");
+    expect(out).toContain("Extracted OA body text.");
+    expect(out).toContain("_status: ok_");
+  });
+
+  it("returns a direct OA link when the copy can't be extracted (e.g. PDF, no unpdf)", async () => {
+    const f = (async (url: string) => {
+      if (url.includes("/search")) return new Response(searchHit({ doi: "10.5/pdf" }), { status: 200 });
+      if (url.includes("api.unpaywall.org")) {
+        return new Response(
+          JSON.stringify({ is_oa: true, best_oa_location: { url_for_pdf: "https://oa.example/x.pdf" } }),
+          { status: 200 },
+        );
+      }
+      return new Response("%PDF-1.7", { status: 200, headers: { "content-type": "application/pdf" } });
+    }) as unknown as typeof fetch;
+    const out = await getProtocolFulltext("10.5/pdf", { fetchImpl: f });
+    expect(out).toContain("https://oa.example/x.pdf");
+    expect(out).toContain("_status: oa-link_");
+  });
 });

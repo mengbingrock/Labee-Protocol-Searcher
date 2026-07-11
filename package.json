@@ -1,7 +1,7 @@
 {
   "name": "@mengbingrock/labee-protocol-searcher",
   "version": "0.2.0",
-  "description": "MCP stdio server + CLI that searches lab-protocol journals and reagent vendors, returning ranked links per source. Zero runtime dependencies.",
+  "description": "MCP stdio server + CLI that searches lab-protocol journals and reagent vendors and fetches open-access full text (Europe PMC, Unpaywall, incl. PDF extraction).",
   "type": "module",
   "bin": {
     "labee-protocol-searcher": "./dist/index.mjs"
@@ -46,5 +46,8 @@
     "tsdown": "^0.20.3",
     "typescript": "^5.7.3",
     "vitest": "^4.0.0"
+  },
+  "dependencies": {
+    "unpdf": "^1.6.2"
   }
 }

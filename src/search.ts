@@ -242,6 +242,8 @@ export interface SourceStatus {
   kind: string;
   /** On-site search page (journals/vendors). */
   searchUrl?: string;
+  /** Human-readable form of the query actually scoped to this source. */
+  query?: string;
   count: number;
   error?: string;
 }
@@ -303,12 +305,20 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
   let partial = base.partial;
 
   for (const b of base.vendors) {
-    const kind = getVendor(b.id)?.kind ?? "vendor";
+    const vendor = getVendor(b.id);
+    const kind = vendor?.kind ?? "vendor";
+    // Echo the effective scoping so the agent can judge why a source was empty.
+    const effectiveQuery = vendor
+      ? kind === "journal"
+        ? `"${trimmed}" in ${b.name}`
+        : `site:${vendor.ddgSite} "${trimmed}"`
+      : undefined;
     sources.push({
       id: b.id,
       name: b.name,
       kind,
       searchUrl: b.searchUrl,
+      ...(effectiveQuery ? { query: effectiveQuery } : {}),
       count: b.results.length,
       ...(b.error ? { error: b.error } : {}),
     });
@@ -344,7 +354,13 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
         ...(opts.providerOpts ?? {}),
         ...(opts.by ? { by: opts.by } : {}),
       });
-      sources.push({ id: "rebase", name: "REBASE (restriction enzymes)", kind: "database", count: hits.length });
+      sources.push({
+        id: "rebase",
+        name: "REBASE (restriction enzymes)",
+        kind: "database",
+        query: `${trimmed} (by ${opts.by ?? (looksLikeEnzymeQuery(trimmed) ? "auto" : "name")})`,
+        count: hits.length,
+      });
       for (const h of hits) {
         results.push({
           id: `rebase:${h.name}`,
@@ -389,6 +405,7 @@ export function renderSearch(resp: UnifiedResponse): string {
   for (const s of resp.sources) {
     const rs = bySource.get(s.id) ?? [];
     lines.push(`## ${s.name} _(${s.kind})_`);
+    if (s.query) lines.push(`Query: \`${s.query}\``);
     if (s.searchUrl) lines.push(`Search page: ${s.searchUrl}`);
     if (rs.length === 0) {
       lines.push(`_No extractable results${s.error ? ` (${s.error})` : ""}._`, "");

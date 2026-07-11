@@ -125,14 +125,41 @@ export async function fetchWithRetry(
   throw lastErr ?? new Error("fetch failed after retries");
 }
 
+// Common named entities that show up in scientific text (°C, µL, ×g, ±, –, —,
+// non-breaking spaces). The full HTML set is huge; this covers what protocols
+// actually use. Anything else numeric is handled generically below.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  deg: "°",
+  micro: "µ",
+  times: "×",
+  plusmn: "±",
+  ndash: "–",
+  mdash: "—",
+  minus: "−",
+  hellip: "…",
+  rsquo: "'",
+  lsquo: "'",
+  rdquo: "”",
+  ldquo: "“",
+};
+
 export function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#39;/g, "'");
+  return s.replace(/&(#x?[0-9a-f]+|[a-z][a-z0-9]*);/gi, (whole, body: string) => {
+    if (body[0] === "#") {
+      const code =
+        body[1] === "x" || body[1] === "X"
+          ? Number.parseInt(body.slice(2), 16)
+          : Number.parseInt(body.slice(1), 10);
+      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : whole;
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
+  });
 }
 
 export function stripTags(s: string): string {

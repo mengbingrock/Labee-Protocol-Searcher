@@ -123,5 +123,21 @@ describe("MCP dispatch", () => {
       });
       expect(res?.result).toMatchObject({ isError: true });
     });
+
+    it("fetches a batch of ids into one response, each under its own header", async () => {
+      const res = await dispatch({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+          name: "fetch",
+          arguments: { ids: ["url:https://www.neb.com/x", "url:https://qiagen.com/y"] },
+        },
+      });
+      const text = (res!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(text).toContain("# url:https://www.neb.com/x");
+      expect(text).toContain("# url:https://qiagen.com/y");
+      expect(text).toContain("---");
+    });
   });
 });

@@ -7,7 +7,7 @@
 // https://modelcontextprotocol.io/specification for the wire format.
 
 import { search, renderSearch } from "./search.ts";
-import { fetchResource } from "./fetch.ts";
+import { fetchResource, fetchResources } from "./fetch.ts";
 import { VENDORS, VENDOR_IDS } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
 import { journalProviderOrder } from "./journals.ts";
@@ -79,23 +79,36 @@ export const TOOLS = [
     title: "Fetch a result's content by id",
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
-      "Retrieve the content of a `search` result by its id. `rebase:<enzyme>` returns the structured " +
-      "restriction-enzyme record (recognition site, cut position, isoschizomers, methylation " +
-      "sensitivity, and which vendors incl. NEB supply it — from REBASE, so no neb.com scraping). " +
-      "`doi:` / `pmid:` / `pmcid:` returns the open-access article full text from Europe PMC. A " +
-      "`url:` vendor page is bot-blocked and can't be fetched — its link is returned instead. Bare " +
-      "DOIs, PMIDs, PMCIDs, and enzyme names also work.",
+      "Retrieve the content of one or more `search` results by id. `rebase:<enzyme>` returns the " +
+      "structured restriction-enzyme record (recognition site, cut position, isoschizomers, " +
+      "methylation sensitivity, and which vendors incl. NEB supply it — from REBASE, so no neb.com " +
+      "scraping). `doi:` / `pmid:` / `pmcid:` returns open-access article full text (Europe PMC, then " +
+      "Unpaywall), rendered section-by-section — pass `section` to read just one (e.g. 'Methods'). A " +
+      "`url:` vendor page is bot-blocked and can't be fetched — its link is returned instead. Pass " +
+      "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
+      "enzyme names also work. Every result ends with a `_status: …_` line (ok, no-open-fulltext, " +
+      "oa-link, not-fetchable, not-found, bad-id).",
     inputSchema: {
       type: "object",
       properties: {
         id: {
           type: "string",
           description:
-            "A result id (`rebase:…`, `doi:…`, `pmid:…`, `pmcid:…`, `url:…`) or a bare " +
+            "A single result id (`rebase:…`, `doi:…`, `pmid:…`, `pmcid:…`, `url:…`) or a bare " +
             "DOI / PMID / PMCID / enzyme name.",
         },
+        ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Several ids to fetch at once (alternative to `id`).",
+        },
+        section: {
+          type: "string",
+          description:
+            "For article full text only: a case-insensitive section-title substring (e.g. " +
+            "'Methods', 'Protocol') to return just that section instead of the whole article.",
+        },
       },
-      required: ["id"],
     },
   },
   {
@@ -133,7 +146,8 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         "",
         `Web-search providers (vendors): ${providers}.`,
         `Journal providers (chain): ${journalProviderOrder().join(" → ")}.`,
-        "Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for rate-limit-free vendor search.",
+        "Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for rate-limit-free vendor search; " +
+          "set PROTOCOLS_CONTACT_EMAIL to enable the Unpaywall open-access full-text fallback.",
       ].join("\n"),
     );
   }
@@ -151,9 +165,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     return toolText(renderSearch(resp));
   }
   if (name === "fetch") {
-    const id = typeof args.id === "string" ? args.id : "";
-    if (!id.trim()) return toolText("Error: `id` is required.", true);
-    return toolText(await fetchResource(id));
+    const section = typeof args.section === "string" ? args.section : undefined;
+    const opts = section ? { section } : {};
+    const list = Array.isArray(args.ids)
+      ? args.ids.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+      : [];
+    const single = typeof args.id === "string" && args.id.trim() ? args.id : "";
+    if (single) list.unshift(single);
+    if (list.length === 0) return toolText("Error: `id` (or `ids`) is required.", true);
+    if (list.length === 1) return toolText(await fetchResource(list[0]!, opts));
+    const rows = await fetchResources(list, opts);
+    return toolText(rows.map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
   }
   return toolText(`Error: unknown tool "${name}".`, true);
 }

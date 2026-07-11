@@ -5,8 +5,9 @@ searches laboratory-protocol journals and reagent vendors for a technique, kit,
 reagent, or product, and returns ranked links per source. It also looks up
 restriction enzymes and fetches open-access protocol full text.
 
-- **Zero runtime dependencies.** The published package is a single self-contained
-  ESM file (`dist/index.mjs`); it uses only Node's built-in `fetch`.
+- **Lean.** The server bundles to a single ESM file (`dist/index.mjs`) using only
+  Node's built-in `fetch`; the one runtime dependency, `unpdf`, powers PDF
+  extraction and is loaded lazily (only when a PDF is actually fetched).
 - Works with any MCP client — the examples below cover **Claude Code** and
   **Codex CLI**.
 
@@ -62,16 +63,29 @@ extraction is unavailable.
 
 ## Tools
 
-- `search_protocols({ query, vendors?, limit? })` — search across sources.
-  `vendors` is an optional subset of source ids; `limit` is per-source (1–10,
-  default 5).
-- `find_restriction_enzyme({ query, by? })` — look up a restriction enzyme in
-  REBASE by name (e.g. `EcoRI`) or recognition sequence (e.g. `GAATTC`): cut
-  position, isoschizomers, methylation sensitivity, source organism, suppliers.
-- `get_protocol_fulltext({ id })` — retrieve open-access full text from Europe
-  PMC by DOI, PMID, or PMCID.
-- `list_protocol_vendors()` — the source catalog and which web-search providers
-  are currently configured.
+Three tools, in a `search` → `fetch` shape.
+
+- `search({ query, sources?, limit? })` — search journals, reagent vendors, and
+  the REBASE enzyme database in one call. Returns a flat, ranked list where each
+  result carries a stable `id`, its `source`, and a `fetchable` flag. `sources`
+  is an optional subset of source ids (REBASE is auto-included for enzyme-shaped
+  queries like `EcoRI` / `GAATTC`); `limit` is per-source (1–10, default 5). Each
+  source also echoes the effective scoped query it ran, so an empty result is
+  explainable.
+- `fetch({ id | ids, section? })` — retrieve a result's content by id:
+  - `rebase:<enzyme>` → the structured REBASE record (cut position,
+    isoschizomers, methylation sensitivity, source organism, suppliers).
+  - `doi:` / `pmid:` / `pmcid:` (or a bare identifier) → open-access full text via
+    **Europe PMC → Unpaywall**, rendered section-by-section. Pass `section` (a
+    title substring, e.g. `Methods`) to read just one section. When Unpaywall
+    only has a landing page or PDF (no PMC copy), `fetch` extracts the text
+    itself — HTML, XML, and PDF (via `unpdf`). The Unpaywall tier needs
+    `PROTOCOLS_CONTACT_EMAIL` set.
+  - `url:` vendor pages are bot-blocked and returned as a link, not scraped.
+  - Pass `ids` to fetch a batch in one call. Every result ends with a
+    `_status: …_` line (`ok`, `no-open-fulltext`, `oa-link`, `not-fetchable`,
+    `not-found`, `bad-id`).
+- `list_sources()` — the source catalog and which providers are configured.
 
 ## Install
 
@@ -116,7 +130,7 @@ env = { BRAVE_API_KEY = "..." }
 git clone https://github.com/mengbingrock/Labee-Protocol-Searcher.git
 cd Labee-Protocol-Searcher
 npm install
-npm run build        # → dist/index.mjs (self-contained, no runtime deps)
+npm run build        # → dist/index.mjs (bundled; unpdf stays in node_modules)
 ```
 
 Then point your client at the built file's absolute path.
@@ -145,7 +159,17 @@ env = { BRAVE_API_KEY = "..." }
 | `PROTOCOLS_SEARCH_PROVIDER` | Force a single vendor provider: `brave` \| `google` \| `duckduckgo`. |
 | `PROTOCOLS_JOURNAL_PROVIDERS` | Reorder/limit the journal chain (comma-separated): `crossref,europepmc,openalex,semanticscholar,pubmed`. |
 | `SEMANTIC_SCHOLAR_API_KEY` / `NCBI_API_KEY` | Optional; raise rate limits for those journal providers. |
-| `PROTOCOLS_CONTACT_EMAIL` | Sent to the Crossref/OpenAlex/NCBI "polite pools" for reliability. |
+| `PROTOCOLS_CONTACT_EMAIL` | Sent to the Crossref/OpenAlex/NCBI "polite pools" for reliability, and required to enable the Unpaywall open-access full-text fallback in `fetch`. |
+
+Set these in your MCP client's `env` block, or — for a local clone — copy
+`.env.example` to `.env` (gitignored) beside the package. The server loads that
+file at startup and never overrides a variable already set in the real
+environment, so the client's `env` block always wins.
+
+**PDF extraction:** when an open-access copy is only a PDF, `fetch` extracts its
+text with [`unpdf`](https://github.com/unjs/unpdf) (pdf.js under the hood). It's
+a normal dependency, loaded lazily so the PDF engine is only pulled in when a PDF
+is actually fetched; a malformed or encrypted PDF falls back to returning the link.
 
 ## Use as a CLI
 

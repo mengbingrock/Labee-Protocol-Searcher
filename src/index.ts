@@ -9,6 +9,7 @@
 //   node dist/index.mjs --fetch "doi:10.1038/nprot.2009.203"
 //   node dist/index.mjs --list-sources
 
+import "./env.ts"; // load .env (side effect) before any env-reading module.
 import { runMcpServer } from "./mcp.ts";
 import { search, renderSearch } from "./search.ts";
 import { fetchResource } from "./fetch.ts";

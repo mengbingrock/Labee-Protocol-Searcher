@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { fetchResource } from "../src/fetch.ts";
+import { fetchResource, fetchResources } from "../src/fetch.ts";
 import { _resetRebaseCache } from "../src/rebase.ts";
 
 // Reuse a tiny REBASE slice so `rebase:` / bare-enzyme routing stays offline.
@@ -53,5 +53,34 @@ describe("fetchResource — bare-id inference", () => {
   it("infers an IUPAC site and routes to REBASE", async () => {
     const out = await fetchResource("GAATTC", { fetchImpl: f });
     expect(out).toContain("Enzymes recognising");
+  });
+});
+
+describe("fetchResource — status footers", () => {
+  it("tags a bot-blocked url as not-fetchable", async () => {
+    expect(await fetchResource("url:https://neb.com/x")).toContain("_status: not-fetchable_");
+  });
+
+  it("tags an unrecognised id as bad-id", async () => {
+    expect(await fetchResource("this is not an id")).toContain("_status: bad-id_");
+  });
+});
+
+describe("fetchResources — batch", () => {
+  it("resolves each id into its own row, in request order", async () => {
+    const rows = await fetchResources(["EcoRI", "url:https://neb.com/x"], { fetchImpl: f });
+    expect(rows.map((r) => r.id)).toEqual(["EcoRI", "url:https://neb.com/x"]);
+    expect(rows[0]!.text).toContain("# EcoRI");
+    expect(rows[1]!.text.toLowerCase()).toContain("bot-block");
+  });
+
+  it("isolates a failing id instead of sinking the batch", async () => {
+    const boom = (async (url: string) => {
+      if (url.includes("neb.com")) return new Response("", { status: 200 }); // unused; url ids don't fetch
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    const rows = await fetchResources(["10.1/x", "url:https://neb.com/x"], { fetchImpl: boom });
+    expect(rows[0]!.text).toContain("_status: error_"); // DOI fetch threw
+    expect(rows[1]!.text.toLowerCase()).toContain("bot-block"); // url id still fine
   });
 });
