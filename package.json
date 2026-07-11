@@ -1,6 +1,6 @@
 {
   "name": "@mengbingrock/labee-protocol-searcher",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP stdio server + CLI that searches lab-protocol journals and reagent vendors and fetches open-access full text (Europe PMC, Unpaywall, incl. PDF extraction).",
   "type": "module",
   "bin": {
