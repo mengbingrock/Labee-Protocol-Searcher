@@ -12,7 +12,8 @@
 import type { ProviderOptions, RawResult } from "./providers/types.ts";
 import { webSearch } from "./providers/registry.ts";
 import { searchJournal } from "./journals.ts";
-import { resolveVendors, type Vendor } from "./vendors.ts";
+import { resolveVendors, getVendor, type Vendor } from "./vendors.ts";
+import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
 
 export interface VendorResults {
   id: string;
@@ -208,6 +209,205 @@ export function renderMarkdown(resp: SearchResponse): string {
     `_${totalHits} result${totalHits === 1 ? "" : "s"} across ${resp.vendors.length} source${
       resp.vendors.length === 1 ? "" : "s"
     }. Search pages always work even when extraction is blocked.${note}_`,
+  );
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Unified search: one flat, id-addressable result list across journals,
+// vendors, AND the REBASE enzyme database. Every result carries a stable `id`
+// (that `fetch` resolves) and a `fetchable` flag encoding whether its content
+// can be retrieved (open-access article / enzyme record) or is links-only (a
+// bot-blocked vendor page). This is the `search`/`fetch` connector shape.
+// ---------------------------------------------------------------------------
+
+export type ResultKind = "enzyme" | "article" | "vendor-page";
+
+export interface UnifiedResult {
+  /** e.g. "rebase:EcoRI", "doi:10.…", "pmid:123", "pmcid:PMC…", "url:https://…". */
+  id: string;
+  source: string;
+  kind: ResultKind;
+  title: string;
+  url?: string;
+  snippet?: string;
+  /** True when `fetch(id)` can return real content (vs. a bot-blocked page). */
+  fetchable: boolean;
+}
+
+export interface SourceStatus {
+  id: string;
+  name: string;
+  /** "journal" | "vendor" | "database". */
+  kind: string;
+  /** On-site search page (journals/vendors). */
+  searchUrl?: string;
+  count: number;
+  error?: string;
+}
+
+export interface UnifiedResponse {
+  query: string;
+  results: UnifiedResult[];
+  sources: SourceStatus[];
+  unknownSources: string[];
+  partial: boolean;
+}
+
+export interface UnifiedOptions extends Omit<SearchOptions, "vendors"> {
+  /** Subset of source ids (vendor/journal ids and/or "rebase"). Omit for all. */
+  sources?: readonly string[];
+  /** Force REBASE lookup mode when the query is enzyme-shaped. */
+  by?: "name" | "site";
+}
+
+/** Derive a fetchable id from a journal result URL (DOI / PMCID / PMID). */
+function idForArticleUrl(url: string): { id: string; fetchable: boolean } {
+  const doi = /doi\.org\/(10\.\S+)/i.exec(url);
+  if (doi) return { id: `doi:${doi[1]}`, fetchable: true };
+  const pmc = /(PMC\d+)/i.exec(url);
+  if (pmc) return { id: `pmcid:${pmc[1]!.toUpperCase()}`, fetchable: true };
+  const med = /europepmc\.org\/article\/MED\/(\d+)/i.exec(url);
+  if (med) return { id: `pmid:${med[1]}`, fetchable: true };
+  return { id: `url:${url}`, fetchable: false };
+}
+
+export async function search(query: string, opts: UnifiedOptions = {}): Promise<UnifiedResponse> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return { query: "", results: [], sources: [], unknownSources: [], partial: false };
+  }
+
+  const requested = opts.sources;
+  const wantRebase = requested
+    ? requested.some((s) => s.trim().toLowerCase() === "rebase")
+    : looksLikeEnzymeQuery(trimmed);
+  const vendorIds = requested
+    ? requested.filter((s) => s.trim().toLowerCase() !== "rebase")
+    : undefined;
+
+  // Run the journal+vendor engine unless the caller asked for REBASE only.
+  const onlyRebase = Boolean(requested) && (vendorIds?.length ?? 0) === 0;
+  const base: SearchResponse = onlyRebase
+    ? { query: trimmed, vendors: [], unknownVendors: [], partial: false }
+    : await searchProtocols(trimmed, {
+        ...(vendorIds ? { vendors: vendorIds } : {}),
+        ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+        ...(opts.batchSize !== undefined ? { batchSize: opts.batchSize } : {}),
+        ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+        ...(opts.providerOpts ? { providerOpts: opts.providerOpts } : {}),
+      });
+
+  const results: UnifiedResult[] = [];
+  const sources: SourceStatus[] = [];
+  let partial = base.partial;
+
+  for (const b of base.vendors) {
+    const kind = getVendor(b.id)?.kind ?? "vendor";
+    sources.push({
+      id: b.id,
+      name: b.name,
+      kind,
+      searchUrl: b.searchUrl,
+      count: b.results.length,
+      ...(b.error ? { error: b.error } : {}),
+    });
+    for (const r of b.results) {
+      if (kind === "journal") {
+        const { id, fetchable } = idForArticleUrl(r.url);
+        results.push({
+          id,
+          source: b.id,
+          kind: "article",
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+          fetchable,
+        });
+      } else {
+        results.push({
+          id: `url:${r.url}`,
+          source: b.id,
+          kind: "vendor-page",
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+          fetchable: false,
+        });
+      }
+    }
+  }
+
+  if (wantRebase) {
+    try {
+      const hits = await searchRebase(trimmed, {
+        ...(opts.providerOpts ?? {}),
+        ...(opts.by ? { by: opts.by } : {}),
+      });
+      sources.push({ id: "rebase", name: "REBASE (restriction enzymes)", kind: "database", count: hits.length });
+      for (const h of hits) {
+        results.push({
+          id: `rebase:${h.name}`,
+          source: "rebase",
+          kind: "enzyme",
+          title: h.title,
+          snippet: h.snippet,
+          fetchable: true,
+        });
+      }
+      if (hits.length === 0) partial = true;
+    } catch (err) {
+      partial = true;
+      sources.push({
+        id: "rebase",
+        name: "REBASE (restriction enzymes)",
+        kind: "database",
+        count: 0,
+        error: err instanceof Error ? err.message : "lookup failed",
+      });
+    }
+  }
+
+  return { query: trimmed, results, sources, unknownSources: base.unknownVendors, partial };
+}
+
+/** Render a UnifiedResponse as compact, model-friendly markdown with ids. */
+export function renderSearch(resp: UnifiedResponse): string {
+  if (!resp.query) return "No query provided.";
+  const lines: string[] = [`# Search: "${resp.query}"`, ""];
+  if (resp.unknownSources.length > 0) {
+    lines.push(`> Unknown source ids ignored: ${resp.unknownSources.join(", ")}`, "");
+  }
+
+  const bySource = new Map<string, UnifiedResult[]>();
+  for (const r of resp.results) {
+    const arr = bySource.get(r.source);
+    if (arr) arr.push(r);
+    else bySource.set(r.source, [r]);
+  }
+
+  for (const s of resp.sources) {
+    const rs = bySource.get(s.id) ?? [];
+    lines.push(`## ${s.name} _(${s.kind})_`);
+    if (s.searchUrl) lines.push(`Search page: ${s.searchUrl}`);
+    if (rs.length === 0) {
+      lines.push(`_No extractable results${s.error ? ` (${s.error})` : ""}._`, "");
+      continue;
+    }
+    for (const r of rs) {
+      lines.push(`- ${r.url ? `[${r.title}](${r.url})` : r.title}`);
+      lines.push(
+        `  \`${r.id}\`${r.fetchable ? " · fetchable" : " · links-only"}` +
+          `${r.snippet ? ` — ${r.snippet}` : ""}`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push(
+    `_${resp.results.length} result${resp.results.length === 1 ? "" : "s"} across ` +
+      `${resp.sources.length} source${resp.sources.length === 1 ? "" : "s"}. ` +
+      "Call `fetch` with a result's id to read fetchable ones; open the search page for links-only sources._",
   );
   return lines.join("\n");
 }

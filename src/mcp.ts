@@ -6,12 +6,14 @@
 // server needs: initialize, tools/list, tools/call, ping. See
 // https://modelcontextprotocol.io/specification for the wire format.
 
-import { searchProtocols, renderMarkdown } from "./search.ts";
+import { search, renderSearch } from "./search.ts";
+import { fetchResource } from "./fetch.ts";
 import { VENDORS, VENDOR_IDS } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
 import { journalProviderOrder } from "./journals.ts";
-import { findRestrictionEnzyme } from "./rebase.ts";
-import { getProtocolFulltext } from "./fulltext.ts";
+
+/** Every searchable source id: the vendors/journals plus the REBASE database. */
+const SOURCE_IDS = [...VENDOR_IDS, "rebase"] as const;
 
 // Versions we speak. The spec requires echoing the client's requested version
 // when we support it, else replying with our latest (the client then decides).
@@ -35,97 +37,74 @@ export interface JsonRpcResponse {
 
 export const TOOLS = [
   {
-    name: "search_protocols",
-    title: "Search lab protocols & reagents",
+    name: "search",
+    title: "Search protocols, reagents & enzymes",
     // Read-only, queries the open web, results vary over time → not idempotent.
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
-      "Search laboratory-protocol and reagent sources (STAR Protocols, Nature Protocols, JoVE, " +
-      "Bio-protocol, Current Protocols, protocols.io, Thermo Fisher, QIAGEN, NEB, Bio-Rad, " +
-      "Sigma-Aldrich, EMD Millipore, Takara Bio, Promega, IDT) " +
-      "for a technique, kit, reagent, or product. Journals are searched via scholarly APIs " +
-      "(Crossref/Europe PMC); vendors via a web-search provider. Returns ranked links with snippets " +
-      "per source plus a guaranteed on-site search URL for each. Use this instead of fetching the " +
-      "vendor sites directly — they bot-block automated requests. For NEB restriction-enzyme facts " +
-      "(recognition site, cut position, methylation, isoschizomers, whether NEB supplies it) call " +
-      "`find_restriction_enzyme` instead — neb.com is links-only. To read the actual text of an " +
-      "open-access protocol/methods article, call `get_protocol_fulltext` with its DOI/PMID/PMCID.",
+      "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, " +
+      "reagent, product, enzyme, or recognition site. Journals (STAR Protocols, Nature Protocols, " +
+      "JoVE, Bio-protocol, Current Protocols, protocols.io) are searched via scholarly APIs " +
+      "(Crossref/Europe PMC); vendors (Thermo Fisher, QIAGEN, NEB, Bio-Rad, Sigma-Aldrich, EMD " +
+      "Millipore, Takara Bio, Promega, IDT) via web search; and restriction enzymes via REBASE (NEB's " +
+      "open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a " +
+      "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` flag. Call " +
+      "`fetch` with a result's id to read its content; vendor pages are links-only (they bot-block " +
+      "direct fetches) — open their URL instead of scraping.",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "What to search for, e.g. 'RNA extraction from FFPE', 'Gibson assembly', 'Q5 polymerase'.",
+            "What to search for, e.g. 'RNA extraction from FFPE', 'Gibson assembly', 'BsaI', 'GAATTC'.",
         },
-        vendors: {
+        sources: {
           type: "array",
-          items: { type: "string", enum: VENDOR_IDS },
+          items: { type: "string", enum: SOURCE_IDS },
           description:
-            "Optional subset of vendor ids to search. Omit to search all. " +
-            `Valid ids: ${VENDOR_IDS.join(", ")}.`,
+            "Optional subset of source ids to search. Omit to search all (REBASE is auto-included " +
+            `for enzyme queries). Valid ids: ${SOURCE_IDS.join(", ")}.`,
         },
         limit: {
           type: "number",
-          description: "Max results per vendor (1-10, default 5).",
+          description: "Max results per source (1-10, default 5).",
         },
       },
       required: ["query"],
     },
   },
   {
-    name: "find_restriction_enzyme",
-    title: "Look up a restriction enzyme (REBASE)",
-    // Read-only, backed by REBASE (a monthly flat-file release) → idempotent.
-    annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
-    description:
-      "Look up a restriction enzyme in REBASE (New England Biolabs' open Restriction Enzyme " +
-      "Database) by enzyme name (e.g. 'EcoRI', 'BsaI') or by recognition sequence (e.g. 'GAATTC'). " +
-      "Returns the recognition site and cut position, isoschizomers, methylation sensitivity, source " +
-      "organism, and which vendors (including NEB) supply it. Use this for NEB enzyme facts instead " +
-      "of fetching neb.com, which bot-blocks automated requests.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "An enzyme name (e.g. 'EcoRI') or a recognition sequence (e.g. 'GAATTC').",
-        },
-        by: {
-          type: "string",
-          enum: ["name", "site"],
-          description: "Force lookup mode. Omit to auto-detect (IUPAC-only strings are treated as a site).",
-        },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "get_protocol_fulltext",
-    title: "Get open-access protocol full text",
+    name: "fetch",
+    title: "Fetch a result's content by id",
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
-      "Retrieve the open-access full text of a protocol/methods article from Europe PMC by DOI, " +
-      "PMID, or PMCID. Returns the article body as plain text (truncated if very long). Use this to " +
-      "read a protocol's actual steps instead of fetching a bot-blocked publisher/vendor page. When " +
-      "no open-access full text exists, returns a citation link to the article.",
+      "Retrieve the content of a `search` result by its id. `rebase:<enzyme>` returns the structured " +
+      "restriction-enzyme record (recognition site, cut position, isoschizomers, methylation " +
+      "sensitivity, and which vendors incl. NEB supply it — from REBASE, so no neb.com scraping). " +
+      "`doi:` / `pmid:` / `pmcid:` returns the open-access article full text from Europe PMC. A " +
+      "`url:` vendor page is bot-blocked and can't be fetched — its link is returned instead. Bare " +
+      "DOIs, PMIDs, PMCIDs, and enzyme names also work.",
     inputSchema: {
       type: "object",
       properties: {
         id: {
           type: "string",
-          description: "Article identifier: a DOI (10.x/y), a PMID (digits), or a PMCID (PMC…).",
+          description:
+            "A result id (`rebase:…`, `doi:…`, `pmid:…`, `pmcid:…`, `url:…`) or a bare " +
+            "DOI / PMID / PMCID / enzyme name.",
         },
       },
       required: ["id"],
     },
   },
   {
-    name: "list_protocol_vendors",
-    title: "List protocol/reagent vendors",
+    name: "list_sources",
+    title: "List searchable sources",
     annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
     description:
-      "List the protocol/reagent vendors this server can search, with their ids and what each is best for.",
+      "List the sources `search` can query — journals, reagent vendors, and the REBASE restriction- " +
+      "enzyme database — with their ids, kind, and whether their results are fetchable.",
     inputSchema: { type: "object", properties: {} },
   },
 ] as const;
@@ -135,16 +114,21 @@ function toolText(text: string, isError = false): unknown {
 }
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-  if (name === "list_protocol_vendors") {
-    const lines = VENDORS.map(
-      (v) => `- ${v.id} [${v.kind}]: ${v.name} — ${v.blurb}`,
+  if (name === "list_sources") {
+    const lines = VENDORS.map((v) => {
+      const fetchable = v.kind === "journal" ? "fetchable (open-access)" : "links-only (bot-blocked)";
+      return `- ${v.id} [${v.kind}]: ${v.name} — ${v.blurb} (${fetchable})`;
+    });
+    lines.unshift(
+      "- rebase [database]: REBASE — restriction-enzyme facts (recognition site, cut, methylation, " +
+        "suppliers incl. NEB) (fetchable)",
     );
     const providers = providerStatus()
       .map((p) => `${p.id}${p.available ? "" : " (not configured)"}`)
       .join(", ");
     return toolText(
       [
-        "Sources:",
+        "Sources (call `search`, then `fetch` a result's id):",
         ...lines,
         "",
         `Web-search providers (vendors): ${providers}.`,
@@ -153,29 +137,23 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       ].join("\n"),
     );
   }
-  if (name === "search_protocols") {
+  if (name === "search") {
     const query = typeof args.query === "string" ? args.query : "";
     if (!query.trim()) return toolText("Error: `query` is required.", true);
-    const vendors = Array.isArray(args.vendors)
-      ? args.vendors.filter((x): x is string => typeof x === "string")
+    const sources = Array.isArray(args.sources)
+      ? args.sources.filter((x): x is string => typeof x === "string")
       : undefined;
     const limit = typeof args.limit === "number" ? args.limit : undefined;
-    const resp = await searchProtocols(query, {
-      ...(vendors ? { vendors } : {}),
+    const resp = await search(query, {
+      ...(sources ? { sources } : {}),
       ...(limit !== undefined ? { limit } : {}),
     });
-    return toolText(renderMarkdown(resp));
+    return toolText(renderSearch(resp));
   }
-  if (name === "find_restriction_enzyme") {
-    const query = typeof args.query === "string" ? args.query : "";
-    if (!query.trim()) return toolText("Error: `query` is required.", true);
-    const by = args.by === "name" || args.by === "site" ? args.by : undefined;
-    return toolText(await findRestrictionEnzyme(query, by ? { by } : {}));
-  }
-  if (name === "get_protocol_fulltext") {
+  if (name === "fetch") {
     const id = typeof args.id === "string" ? args.id : "";
     if (!id.trim()) return toolText("Error: `id` is required.", true);
-    return toolText(await getProtocolFulltext(id));
+    return toolText(await fetchResource(id));
   }
   return toolText(`Error: unknown tool "${name}".`, true);
 }

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   findRestrictionEnzyme,
+  looksLikeEnzymeQuery,
   normalizeSite,
   parseRebase,
+  searchRebase,
   _resetRebaseCache,
 } from "../src/rebase.ts";
 
@@ -101,5 +103,29 @@ describe("findRestrictionEnzyme", () => {
     // 403 is non-retryable, so this returns immediately (no backoff sleeps).
     const bad = (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch;
     await expect(findRestrictionEnzyme("EcoRI", { fetchImpl: bad })).rejects.toThrow(/REBASE HTTP 403/);
+  });
+});
+
+describe("looksLikeEnzymeQuery", () => {
+  it("matches enzyme names and IUPAC sites, not general queries", () => {
+    expect(looksLikeEnzymeQuery("EcoRI")).toBe(true);
+    expect(looksLikeEnzymeQuery("HindIII")).toBe(true);
+    expect(looksLikeEnzymeQuery("GAATTC")).toBe(true);
+    expect(looksLikeEnzymeQuery("Gibson assembly")).toBe(false);
+    expect(looksLikeEnzymeQuery("Q5 polymerase")).toBe(false);
+  });
+});
+
+describe("searchRebase", () => {
+  it("returns a hit with a fetchable-friendly title + snippet by name", async () => {
+    const hits = await searchRebase("EcoRI", { fetchImpl: f });
+    expect(hits[0]!.name).toBe("EcoRI");
+    expect(hits[0]!.title).toContain("G^AATTC");
+    expect(hits[0]!.snippet).toContain("NEB-supplied");
+  });
+
+  it("returns site matches, NEB-supplied first", async () => {
+    const hits = await searchRebase("GAATTC", { fetchImpl: f });
+    expect(hits.map((h) => h.name)).toEqual(["EcoRI", "FunII"]);
   });
 });

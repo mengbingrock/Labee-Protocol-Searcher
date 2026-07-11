@@ -244,3 +244,71 @@ export async function findRestrictionEnzyme(
     : " No similar enzyme names found in REBASE.";
   return `No REBASE enzyme named "${trimmed}".${tail}`;
 }
+
+/** A compact one-line summary for a search listing. */
+function enzymeSnippet(rec: EnzymeRecord): string {
+  const parts = [rec.site || "site unknown"];
+  if (rec.organism) parts.push(rec.organism);
+  parts.push(rec.suppliers.includes(NEB_CODE) ? "NEB-supplied" : "not an NEB product");
+  return parts.join(" · ");
+}
+
+export interface EnzymeHit {
+  name: string;
+  /** "EcoRI — G^AATTC" */
+  title: string;
+  snippet: string;
+}
+
+/**
+ * Heuristic: does this query name a restriction enzyme or a recognition site?
+ * Used to auto-include REBASE in a general `search`. Single-token only — enzyme
+ * names end in a Roman numeral (EcoRI, HindIII, BsaI); sites are pure IUPAC.
+ */
+export function looksLikeEnzymeQuery(query: string): boolean {
+  const q = query.trim();
+  if (!q || /\s/.test(q)) return false;
+  return looksLikeSite(q) || /^[A-Za-z]{2,}[IVX]+$/.test(q);
+}
+
+/**
+ * Search REBASE for enzymes matching a name or recognition site, returning
+ * compact hits for a result listing (each `fetch`-able via `rebase:<name>`).
+ */
+export async function searchRebase(
+  query: string,
+  opts: EnzymeLookupOptions = {},
+): Promise<EnzymeHit[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const index = await loadIndex(opts);
+  const by = opts.by ?? (looksLikeSite(trimmed) ? "site" : "name");
+  const toHit = (rec: EnzymeRecord): EnzymeHit => ({
+    name: rec.name,
+    title: `${rec.name} — ${rec.site || "site unknown"}`,
+    snippet: enzymeSnippet(rec),
+  });
+
+  if (by === "site") {
+    const names = index.bySite.get(normalizeSite(trimmed)) ?? [];
+    return names
+      .map((n) => index.byName.get(n.toUpperCase()))
+      .filter((r): r is EnzymeRecord => Boolean(r))
+      .sort(
+        (a, b) => Number(b.suppliers.includes(NEB_CODE)) - Number(a.suppliers.includes(NEB_CODE)),
+      )
+      .slice(0, 8)
+      .map(toHit);
+  }
+
+  const hits: EnzymeHit[] = [];
+  const exact = index.byName.get(trimmed.toUpperCase());
+  if (exact) hits.push(toHit(exact));
+  for (const nm of suggestNames(index, trimmed, 8)) {
+    if (nm.toUpperCase() === trimmed.toUpperCase()) continue;
+    const rec = index.byName.get(nm.toUpperCase());
+    if (rec) hits.push(toHit(rec));
+    if (hits.length >= 8) break;
+  }
+  return hits;
+}

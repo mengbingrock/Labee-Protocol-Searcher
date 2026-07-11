@@ -38,12 +38,7 @@ describe("MCP dispatch", () => {
   it("lists all tools with input schemas", async () => {
     const res = await dispatch({ jsonrpc: "2.0", id: 2, method: "tools/list" });
     const tools = (res!.result as { tools: typeof TOOLS }).tools;
-    expect(tools.map((t) => t.name)).toEqual([
-      "search_protocols",
-      "find_restriction_enzyme",
-      "get_protocol_fulltext",
-      "list_protocol_vendors",
-    ]);
+    expect(tools.map((t) => t.name)).toEqual(["search", "fetch", "list_sources"]);
     expect(tools[0]!.inputSchema.required).toContain("query");
   });
 
@@ -52,7 +47,7 @@ describe("MCP dispatch", () => {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
-      params: { name: "search_protocols", arguments: {} },
+      params: { name: "search", arguments: {} },
     });
     expect(res?.result).toMatchObject({ isError: true });
   });
@@ -62,20 +57,30 @@ describe("MCP dispatch", () => {
     expect(res?.error?.code).toBe(-32601);
   });
 
-  describe("search_protocols tool", () => {
+  describe("search tool", () => {
     beforeEach(() => {
-      vi.spyOn(search, "searchProtocols").mockResolvedValue({
+      vi.spyOn(search, "search").mockResolvedValue({
         query: "gibson assembly",
-        unknownVendors: [],
+        unknownSources: [],
         partial: false,
-        vendors: [
+        sources: [
           {
             id: "neb",
             name: "New England Biolabs (NEB)",
+            kind: "vendor",
             searchUrl: "https://www.neb.com/en-us/search?searchValue=gibson%20assembly",
-            results: [
-              { title: "Gibson Assembly Protocol", url: "https://www.neb.com/x", snippet: "steps" },
-            ],
+            count: 1,
+          },
+        ],
+        results: [
+          {
+            id: "url:https://www.neb.com/x",
+            source: "neb",
+            kind: "vendor-page",
+            title: "Gibson Assembly Protocol",
+            url: "https://www.neb.com/x",
+            snippet: "steps",
+            fetchable: false,
           },
         ],
       });
@@ -87,12 +92,36 @@ describe("MCP dispatch", () => {
         jsonrpc: "2.0",
         id: 5,
         method: "tools/call",
-        params: { name: "search_protocols", arguments: { query: "gibson assembly" } },
+        params: { name: "search", arguments: { query: "gibson assembly" } },
       });
       const content = (res!.result as { content: { type: string; text: string }[] }).content;
       expect(content[0]!.type).toBe("text");
       expect(content[0]!.text).toContain("Gibson Assembly Protocol");
-      expect(content[0]!.text).toContain("https://www.neb.com/x");
+      expect(content[0]!.text).toContain("url:https://www.neb.com/x");
+    });
+  });
+
+  describe("fetch tool", () => {
+    it("returns the link (not a scrape) for a bot-blocked url id", async () => {
+      const res = await dispatch({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: { name: "fetch", arguments: { id: "url:https://www.neb.com/x" } },
+      });
+      const text = (res!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(text).toContain("https://www.neb.com/x");
+      expect(text.toLowerCase()).toContain("bot-block");
+    });
+
+    it("errors when id is missing", async () => {
+      const res = await dispatch({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "fetch", arguments: {} },
+      });
+      expect(res?.result).toMatchObject({ isError: true });
     });
   });
 });
