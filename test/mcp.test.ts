@@ -8,7 +8,7 @@ describe("MCP dispatch", () => {
     expect(res?.result).toMatchObject({
       protocolVersion: expect.any(String),
       capabilities: { tools: {} },
-      serverInfo: { name: "mcp-protocols" },
+      serverInfo: { name: "labee-protocol-searcher" },
     });
   });
 

@@ -20,7 +20,7 @@ import type { JournalInfo } from "./vendors.ts";
 
 const DEFAULT_TIMEOUT_MS = 9000;
 // Identifies us to the "polite pools" (Crossref, OpenAlex, NCBI) for reliability.
-const CONTACT = process.env.PROTOCOLS_CONTACT_EMAIL || "mcp-protocols@example.com";
+const CONTACT = process.env.PROTOCOLS_CONTACT_EMAIL || "labee-protocol-searcher@example.com";
 
 export interface JournalSearchOutcome {
   results: RawResult[];
@@ -70,7 +70,7 @@ const crossref: JournalSearchFn = async (journal, query, limit, opts) => {
   const res = await fetchWithRetry(
     doFetch,
     url,
-    { headers: { Accept: "application/json", "User-Agent": `mcp-protocols (mailto:${CONTACT})` } },
+    { headers: { Accept: "application/json", "User-Agent": `labee-protocol-searcher (mailto:${CONTACT})` } },
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   if (res.status !== 200) throw new Error(`Crossref HTTP ${res.status}`);
@@ -132,7 +132,7 @@ const openalex: JournalSearchFn = async (journal, query, limit, opts) => {
   const res = await fetchWithRetry(
     doFetch,
     url,
-    { headers: { Accept: "application/json", "User-Agent": `mcp-protocols (mailto:${CONTACT})` } },
+    { headers: { Accept: "application/json", "User-Agent": `labee-protocol-searcher (mailto:${CONTACT})` } },
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   if (res.status !== 200) throw new Error(`OpenAlex HTTP ${res.status}`);
@@ -184,7 +184,7 @@ const pubmed: JournalSearchFn = async (journal, query, limit, opts) => {
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const keyParam = process.env.NCBI_API_KEY ? `&api_key=${process.env.NCBI_API_KEY}` : "";
-  const common = `&tool=mcp-protocols&email=${encodeURIComponent(CONTACT)}${keyParam}`;
+  const common = `&tool=labee-protocol-searcher&email=${encodeURIComponent(CONTACT)}${keyParam}`;
   const term = `${query} AND "${journal.europepmcJournal}"[Journal]`;
   const esearchUrl =
     `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json` +

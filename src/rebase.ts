@@ -136,7 +136,7 @@ async function loadIndex(opts: ProviderOptions): Promise<RebaseIndex> {
   const res = await fetchWithRetry(
     doFetch,
     REBASE_URL,
-    { headers: { Accept: "text/plain", "User-Agent": "mcp-protocols" } },
+    { headers: { Accept: "text/plain", "User-Agent": "labee-protocol-searcher" } },
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   if (res.status !== 200) throw new Error(`REBASE HTTP ${res.status}`);

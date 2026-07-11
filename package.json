@@ -1,10 +1,10 @@
 {
-  "name": "@mengbingrock/mcp-protocols",
+  "name": "@mengbingrock/labee-protocol-searcher",
   "version": "0.1.0",
   "description": "MCP stdio server + CLI that searches lab-protocol journals and reagent vendors, returning ranked links per source. Zero runtime dependencies.",
   "type": "module",
   "bin": {
-    "mcp-protocols": "./dist/index.mjs"
+    "labee-protocol-searcher": "./dist/index.mjs"
   },
   "files": [
     "dist",
@@ -36,7 +36,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mengbingrock/mcp-protocols.git"
+    "url": "git+https://github.com/mengbingrock/Labee-Protocol-Searcher.git"
   },
   "publishConfig": {
     "access": "public"

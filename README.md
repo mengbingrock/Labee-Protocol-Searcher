@@ -1,4 +1,4 @@
-# mcp-protocols
+# Labee Protocol Searcher
 
 An **MCP (Model Context Protocol) stdio server** — and standalone CLI — that
 searches laboratory-protocol journals and reagent vendors for a technique, kit,
@@ -83,7 +83,7 @@ no build step.
 **Claude Code:**
 
 ```sh
-claude mcp add protocols -- npx -y @mengbingrock/mcp-protocols
+claude mcp add protocols -- npx -y @mengbingrock/labee-protocol-searcher
 ```
 
 Or add it by hand to your MCP config (`~/.claude.json` or a project
@@ -94,7 +94,7 @@ Or add it by hand to your MCP config (`~/.claude.json` or a project
   "mcpServers": {
     "protocols": {
       "command": "npx",
-      "args": ["-y", "@mengbingrock/mcp-protocols"],
+      "args": ["-y", "@mengbingrock/labee-protocol-searcher"],
       "env": { "BRAVE_API_KEY": "..." }
     }
   }
@@ -106,15 +106,15 @@ Or add it by hand to your MCP config (`~/.claude.json` or a project
 ```toml
 [mcp_servers.protocols]
 command = "npx"
-args = ["-y", "@mengbingrock/mcp-protocols"]
+args = ["-y", "@mengbingrock/labee-protocol-searcher"]
 env = { BRAVE_API_KEY = "..." }
 ```
 
 ### Option B — git clone + build (no npm account needed)
 
 ```sh
-git clone https://github.com/mengbingrock/mcp-protocols.git
-cd mcp-protocols
+git clone https://github.com/mengbingrock/Labee-Protocol-Searcher.git
+cd Labee-Protocol-Searcher
 npm install
 npm run build        # → dist/index.mjs (self-contained, no runtime deps)
 ```
@@ -124,7 +124,7 @@ Then point your client at the built file's absolute path.
 **Claude Code:**
 
 ```sh
-claude mcp add protocols -- node /abs/path/to/mcp-protocols/dist/index.mjs
+claude mcp add protocols -- node /abs/path/to/Labee-Protocol-Searcher/dist/index.mjs
 ```
 
 **Codex CLI** (`~/.codex/config.toml`):
@@ -132,7 +132,7 @@ claude mcp add protocols -- node /abs/path/to/mcp-protocols/dist/index.mjs
 ```toml
 [mcp_servers.protocols]
 command = "node"
-args = ["/abs/path/to/mcp-protocols/dist/index.mjs"]
+args = ["/abs/path/to/Labee-Protocol-Searcher/dist/index.mjs"]
 env = { BRAVE_API_KEY = "..." }
 ```
 
@@ -157,7 +157,7 @@ node dist/index.mjs --query "Q5 polymerase" --json
 node dist/index.mjs --list-vendors
 
 # or via the bin, when installed globally / with npx:
-npx @mengbingrock/mcp-protocols --query "RNA extraction FFPE"
+npx @mengbingrock/labee-protocol-searcher --query "RNA extraction FFPE"
 ```
 
 In dev, skip the build with `npm run dev -- --query "..."`

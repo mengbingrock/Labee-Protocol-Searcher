@@ -17,7 +17,7 @@ import { getProtocolFulltext } from "./fulltext.ts";
 // when we support it, else replying with our latest (the client then decides).
 const LATEST_PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2024-11-05"];
-const SERVER_INFO = { name: "mcp-protocols", version: "0.1.0" };
+const SERVER_INFO = { name: "labee-protocol-searcher", version: "0.1.0" };
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -230,7 +230,7 @@ export async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | n
 /** Start the stdio server. Resolves when stdin closes. */
 export function runMcpServer(): Promise<void> {
   return new Promise((resolve) => {
-    process.stderr.write("[mcp-protocols] MCP server ready on stdio\n");
+    process.stderr.write("[labee-protocol-searcher] MCP server ready on stdio\n");
     let buf = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk: string) => {
