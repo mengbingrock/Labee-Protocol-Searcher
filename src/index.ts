@@ -1,16 +1,22 @@
 #!/usr/bin/env node
-// Entry point. With no `--query`/`--fetch`, runs as an MCP stdio server (the
-// mode the chat route spawns). Otherwise runs a one-shot CLI so the same logic
-// is usable by hand and in tests:
+// Entry point, with three modes:
 //
-//   node dist/index.mjs --query "RNA extraction FFPE"
-//   node dist/index.mjs --query "BsaI" --sources rebase,neb --limit 3 --json
-//   node dist/index.mjs --fetch "rebase:EcoRI"
-//   node dist/index.mjs --fetch "doi:10.1038/nprot.2009.203"
-//   node dist/index.mjs --list-sources
+//   MCP over stdio (default — a client spawns this as a child process):
+//     node dist/index.mjs
+//
+//   MCP over Streamable HTTP (a hosted server clients reach by URL):
+//     node dist/index.mjs --http [--port 3001] [--host 127.0.0.1]
+//
+//   One-shot CLI, so the same logic is usable by hand and in tests:
+//     node dist/index.mjs --query "RNA extraction FFPE"
+//     node dist/index.mjs --query "BsaI" --sources rebase,neb --limit 3 --json
+//     node dist/index.mjs --fetch "rebase:EcoRI"
+//     node dist/index.mjs --fetch "doi:10.1038/nprot.2009.203"
+//     node dist/index.mjs --list-sources
 
 import "./env.ts"; // load .env (side effect) before any env-reading module.
 import { runMcpServer } from "./mcp.ts";
+import { runHttpServer } from "./http.ts";
 import { search, renderSearch } from "./search.ts";
 import { fetchResource } from "./fetch.ts";
 import { VENDORS } from "./vendors.ts";
@@ -22,10 +28,13 @@ interface CliArgs {
   fetchId?: string;
   json: boolean;
   listSources: boolean;
+  http: boolean;
+  port?: number;
+  host?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const out: CliArgs = { json: false, listSources: false };
+  const out: CliArgs = { json: false, listSources: false, http: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--query" || a === "-q") out.query = argv[++i] ?? "";
@@ -35,9 +44,39 @@ function parseArgs(argv: string[]): CliArgs {
     else if (a === "--limit" || a === "-l") out.limit = Number(argv[++i]);
     else if (a === "--json") out.json = true;
     else if (a === "--list-sources") out.listSources = true;
+    else if (a === "--http") out.http = true;
+    else if (a === "--port") out.port = Number(argv[++i]);
+    else if (a === "--host") out.host = argv[++i] ?? "";
     else if (a && !a.startsWith("-") && out.query === undefined) out.query = a;
   }
   return out;
+}
+
+/**
+ * Start the HTTP transport. Binds loopback by default: the deployed topology
+ * puts nginx in front, so the port itself should never face the internet.
+ */
+async function runHttp(args: CliArgs): Promise<void> {
+  const port = args.port ?? Number(process.env.PROTOCOLS_MCP_PORT ?? process.env.PORT ?? 3001);
+  const host = args.host ?? process.env.PROTOCOLS_MCP_HOST ?? "127.0.0.1";
+  const token = process.env.PROTOCOLS_MCP_TOKEN?.trim();
+  const path = process.env.PROTOCOLS_MCP_PATH_PREFIX ?? "/mcp";
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port: ${args.port ?? process.env.PROTOCOLS_MCP_PORT}`);
+  }
+  // Refuse to expose an unauthenticated endpoint on a public interface — the
+  // tools spend third-party API quota, so an open one is someone else's budget.
+  if (!token && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+    throw new Error(
+      `Refusing to bind ${host} without PROTOCOLS_MCP_TOKEN set. ` +
+        `Set a token, or bind 127.0.0.1 and put a proxy in front.`,
+    );
+  }
+
+  await runHttpServer(port, host, { ...(token ? { token } : {}), path });
+  // Resolve never: the process stays up until systemd stops it.
+  await new Promise<void>(() => {});
 }
 
 async function runCli(args: CliArgs): Promise<void> {
@@ -72,6 +111,11 @@ const args = parseArgs(process.argv.slice(2));
 
 if (args.query !== undefined || args.fetchId !== undefined || args.listSources) {
   runCli(args).catch((err) => {
+    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
+} else if (args.http) {
+  runHttp(args).catch((err) => {
     process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   });
