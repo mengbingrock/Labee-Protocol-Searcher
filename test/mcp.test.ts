@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { dispatch, TOOLS } from "../src/mcp.ts";
 import * as search from "../src/search.ts";
@@ -10,6 +11,16 @@ describe("MCP dispatch", () => {
       capabilities: { tools: {} },
       serverInfo: { name: "labee-protocol-searcher" },
     });
+  });
+
+  it("reports the package.json version, not a hardcoded one", async () => {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    const res = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" });
+    expect((res!.result as { serverInfo: { version: string } }).serverInfo.version).toBe(
+      pkg.version,
+    );
   });
 
   it("echoes the client's protocol version when supported, else its latest", async () => {

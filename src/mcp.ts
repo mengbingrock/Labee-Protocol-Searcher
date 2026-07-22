@@ -6,6 +6,7 @@
 // server needs: initialize, tools/list, tools/call, ping. See
 // https://modelcontextprotocol.io/specification for the wire format.
 
+import { readFileSync } from "node:fs";
 import { search, renderSearch } from "./search.ts";
 import { fetchResource, fetchResources } from "./fetch.ts";
 import { VENDORS, VENDOR_IDS } from "./vendors.ts";
@@ -19,7 +20,21 @@ const SOURCE_IDS = [...VENDOR_IDS, "rebase"] as const;
 // when we support it, else replying with our latest (the client then decides).
 const LATEST_PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2024-11-05"];
-const SERVER_INFO = { name: "labee-protocol-searcher", version: "0.1.0" };
+// Read from package.json rather than hardcoded, so the version a client sees in
+// `initialize` can't drift from the published one. Both src/mcp.ts and the
+// bundled dist/index.mjs sit one directory below the package root.
+function packageVersion(): string {
+  try {
+    const raw = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+    const version = (JSON.parse(raw) as { version?: unknown }).version;
+    if (typeof version === "string" && version) return version;
+  } catch {
+    // Unreadable/moved package.json must not stop the server from serving tools.
+  }
+  return "0.0.0";
+}
+
+const SERVER_INFO = { name: "labee-protocol-searcher", version: packageVersion() };
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
