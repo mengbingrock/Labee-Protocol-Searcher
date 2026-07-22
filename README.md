@@ -160,6 +160,8 @@ env = { BRAVE_API_KEY = "..." }
 | `PROTOCOLS_JOURNAL_PROVIDERS` | Reorder/limit the journal chain (comma-separated): `crossref,europepmc,openalex,semanticscholar,pubmed`. |
 | `SEMANTIC_SCHOLAR_API_KEY` / `NCBI_API_KEY` | Optional; raise rate limits for those journal providers. |
 | `PROTOCOLS_CONTACT_EMAIL` | Sent to the Crossref/OpenAlex/NCBI "polite pools" for reliability, and required to enable the Unpaywall open-access full-text fallback in `fetch`. |
+| `PROTOCOLS_MCP_TOKEN` | HTTP mode only: shared secret required as `Authorization: Bearer <token>`. |
+| `PROTOCOLS_MCP_PORT` / `PROTOCOLS_MCP_HOST` | HTTP mode only: listen address. Default `3001` on `127.0.0.1`. |
 
 Set these in your MCP client's `env` block, or — for a local clone — copy
 `.env.example` to `.env` (gitignored) beside the package. The server loads that
@@ -170,6 +172,43 @@ environment, so the client's `env` block always wins.
 text with [`unpdf`](https://github.com/unjs/unpdf) (pdf.js under the hood). It's
 a normal dependency, loaded lazily so the PDF engine is only pulled in when a PDF
 is actually fetched; a malformed or encrypted PDF falls back to returning the link.
+
+## Run as a remote (HTTP) server
+
+Besides stdio, the server speaks MCP's Streamable HTTP transport, so one hosted
+instance can serve many clients instead of each one spawning its own child
+process:
+
+```sh
+PROTOCOLS_MCP_TOKEN=$(openssl rand -hex 32) node dist/index.mjs --http --port 3001
+```
+
+It binds `127.0.0.1` by default — put a TLS-terminating proxy in front rather
+than exposing the port. Binding a non-loopback address without
+`PROTOCOLS_MCP_TOKEN` set is refused outright, since the tools spend
+third-party API quota and an open endpoint spends someone else's budget.
+
+The endpoint is `POST /mcp`; `GET /healthz` is an unauthenticated liveness
+probe. The server is sessionless (no `Mcp-Session-Id`), so clients never need to
+resume, and it doesn't offer a server-initiated SSE stream — `GET /mcp` returns
+405, as the spec requires of servers that don't.
+
+Point a client at it with a bearer token:
+
+```jsonc
+// claude --mcp-config '<this>'
+{ "mcpServers": { "protocols": {
+    "type": "http",
+    "url": "https://example.com/mcp",
+    "headers": { "Authorization": "Bearer YOUR_TOKEN" } } } }
+```
+
+```toml
+# ~/.codex/config.toml — codex reads the token from the named env var
+[mcp_servers.protocols]
+url = "https://example.com/mcp"
+bearer_token_env_var = "LABEE_MCP_TOKEN"
+```
 
 ## Use as a CLI
 
