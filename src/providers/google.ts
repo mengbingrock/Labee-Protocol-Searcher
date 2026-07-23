@@ -11,6 +11,7 @@ import {
   type RawResult,
   type WebProvider,
   fetchWithTimeout,
+  stripTags,
 } from "./types.ts";
 
 const DEFAULT_ENDPOINT = "https://www.googleapis.com/customsearch/v1";
@@ -62,7 +63,13 @@ export const googleProvider: WebProvider = {
       const results: RawResult[] = (json.items ?? [])
         .filter((r) => r.link && r.title)
         .slice(0, limit)
-        .map((r) => ({ title: r.title!, url: r.link!, snippet: r.snippet ?? "" }));
+        // Usually plain text already, but entities (&quot;, &#39;) do come
+        // through — normalise on the same path as the other providers.
+        .map((r) => ({
+          title: stripTags(r.title!),
+          url: r.link!,
+          snippet: stripTags(r.snippet ?? ""),
+        }));
       return results.length > 0
         ? { results, status: res.status }
         : { results: [], status: res.status, error: "Google API returned no results" };

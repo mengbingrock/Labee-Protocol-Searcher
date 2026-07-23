@@ -110,3 +110,24 @@ describe("keyed providers", () => {
     expect(res.results[0]).toMatchObject({ url: "https://www.qiagen.com/h", title: "RNeasy Handbook" });
   });
 });
+
+describe("snippet markup", () => {
+  it("strips Brave's <strong> match markers and entities", async () => {
+    process.env.BRAVE_API_KEY = "k";
+    const body = JSON.stringify({
+      web: {
+        results: [
+          {
+            title: "RNA <strong>Extraction</strong> Kits &amp; Reagents",
+            url: "https://www.qiagen.com/x",
+            description: "Explore our <strong>RNA extraction kit</strong>s at 4 &deg;C.",
+          },
+        ],
+      },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await braveProvider.run("rna", 3, { fetchImpl: f });
+    expect(out.results[0]!.title).toBe("RNA Extraction Kits & Reagents");
+    expect(out.results[0]!.snippet).toBe("Explore our RNA extraction kits at 4 °C.");
+  });
+});

@@ -3,7 +3,8 @@
 //
 //   rebase:<enzyme|site>   → REBASE structured record   (rebase.ts)
 //   doi: / pmid: / pmcid:  → open full text              (fulltext.ts)
-//   url:<href>             → not fetchable (the vendor bot-blocks) — return the link
+//   url:<href>             → extract the page's readable text; sites that refuse
+//                            the request (403) degrade to returning the link
 //
 // Bare ids with no scheme are inferred from their shape, so the model can pass a
 // raw DOI, accession, or enzyme name directly. `fetchResources` resolves a
@@ -13,6 +14,7 @@
 import type { ProviderOptions } from "./providers/types.ts";
 import { findRestrictionEnzyme } from "./rebase.ts";
 import { getProtocolFulltext, type FulltextOptions } from "./fulltext.ts";
+import { extractOaContent } from "./extract.ts";
 
 const PMCID = /^PMC\d+$/i;
 const PMID = /^\d+$/;
@@ -31,10 +33,26 @@ function withStatus(text: string, status: string): string {
 
 function notFetchable(url: string): string {
   return withStatus(
-    "This page can't be retrieved automatically — the site bot-blocks direct requests.\n\n" +
+    "This page can't be retrieved automatically — the site refused the request.\n\n" +
       `Open it directly: ${url}`,
     "not-fetchable",
   );
+}
+
+/** Max characters of extracted vendor-page text to return. */
+const WEB_PAGE_MAX_CHARS = 40_000;
+
+/**
+ * Retrieve a vendor/web page's readable text. Some vendors (neb.com) answer a
+ * plain request with 403; `extractOaContent` returns null for any non-200 rather
+ * than throwing, so those degrade to the bare link instead of failing the call.
+ * We make one ordinary request and take no for an answer.
+ */
+async function fetchWebPage(url: string, opts: FetchOptions): Promise<string> {
+  if (!/^https?:\/\//i.test(url)) return notFetchable(url);
+  const extracted = await extractOaContent(url, opts, WEB_PAGE_MAX_CHARS);
+  if (!extracted?.text?.trim()) return notFetchable(url);
+  return withStatus(`_Source: ${url} (${extracted.format} extraction)._\n\n${extracted.text}`, "ok");
 }
 
 /** Fetch the content behind a search-result id (or a bare identifier). */
@@ -55,10 +73,10 @@ export async function fetchResource(id: string, opts: FetchOptions = {}): Promis
       // getProtocolFulltext appends its own (more specific) status footer.
       return getProtocolFulltext(rest, opts);
     case "url":
-      return notFetchable(rest);
+      return fetchWebPage(rest, opts);
     case "http":
     case "https":
-      return notFetchable(raw);
+      return fetchWebPage(raw, opts);
   }
 
   // No recognised scheme — infer from the bare value's shape.

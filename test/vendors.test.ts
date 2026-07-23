@@ -50,3 +50,24 @@ describe("vendor registry", () => {
     expect(unknown).toEqual(["bogus"]);
   });
 });
+
+describe("fetchability grading", () => {
+  it("grades every source, and never claims a known-blocked site is fetchable", () => {
+    for (const v of VENDORS) {
+      expect(["full", "partial", "none"], v.id).toContain(v.fetchability);
+    }
+    // Measured 403s — see the per-source notes in vendors.ts.
+    for (const id of ["neb", "sigma-aldrich", "emd-millipore"]) {
+      expect(getVendor(id)!.fetchability, id).toBe("none");
+    }
+  });
+
+  it("does not infer fetchability from kind", () => {
+    // The bug this replaces assumed journal ⇒ fetchable, vendor ⇒ links-only.
+    // Both halves are false, and these two sources are why.
+    expect(getVendor("nature-protocols")!.kind).toBe("journal");
+    expect(getVendor("nature-protocols")!.fetchability).not.toBe("full");
+    expect(getVendor("promega")!.kind).toBe("vendor");
+    expect(getVendor("promega")!.fetchability).toBe("full");
+  });
+});

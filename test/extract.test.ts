@@ -50,3 +50,216 @@ describe("extractOaContent", () => {
     expect(out!.text).toContain("truncated");
   });
 });
+
+describe("extractOaContent — protocols.io", () => {
+  const PAYLOAD = {
+    title: "eDNA COI PCR",
+    authors: [{ name: "A. Researcher" }],
+    description: "<p>Amplify COI.</p>",
+    steps: [
+      { step: JSON.stringify({ blocks: [{ text: "Wipe pipette with 70% ethanol" }] }) },
+      { step: JSON.stringify({ blocks: [{ text: "Denature at 95C" }, { text: "Anneal at 55C" }] }) },
+    ],
+  };
+
+  it("reads the .json sibling instead of the empty client-rendered shell", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.endsWith(".json")) {
+        return new Response(JSON.stringify(PAYLOAD), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // What the real site serves a bot: a shell with no readable text.
+      return new Response("<html><body><main></main></body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+
+    const out = await extractOaContent("https://www.protocols.io/view/edna-coi-pcr-abc123", { fetchImpl }, 20000);
+    expect(seen[0]).toBe("https://www.protocols.io/view/edna-coi-pcr-abc123.json");
+    expect(out?.format).toBe("json");
+    expect(out?.text).toContain("# eDNA COI PCR");
+    expect(out?.text).toContain("Wipe pipette with 70% ethanol");
+    expect(out?.text).toContain("Anneal at 55C"); // every draft-js block, not just the first
+  });
+
+  it("falls back to `document` for narrative protocols with no steps", async () => {
+    // Some protocols.io entries ship steps: [] and put everything in `document`.
+    // Without the fallback these extract to a title line and still report ok.
+    const narrative = {
+      title: "Introduction to PCR",
+      authors: [{ name: "I. Anigbogu" }],
+      steps: [],
+      document: JSON.stringify({
+        blocks: [{ text: "Goals" }, { text: "Learn the principles of amplification." }],
+      }),
+    };
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify(narrative), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const out = await extractOaContent("https://www.protocols.io/view/intro-abc/v1", { fetchImpl }, 20000);
+    expect(out?.text).toContain("Learn the principles of amplification.");
+    expect(out!.text.length).toBeGreaterThan(60);
+  });
+
+  it("renders reaction tables and notes from the draft-js entityMap", async () => {
+    // The bench-critical content (volumes, concentrations) lives in `atomic`
+    // blocks pointing into entityMap, not in blocks[].text.
+    const step = JSON.stringify({
+      blocks: [
+        { type: "unstyled", text: "Set up the following reaction:", entityRanges: [] },
+        { type: "atomic", text: " ", entityRanges: [{ key: 0 }] },
+        { type: "atomic", text: " ", entityRanges: [{ key: 1 }] },
+      ],
+      entityMap: {
+        "0": { type: "notes", data: { blocks: [{ type: "unstyled", text: "Keep on ice.", entityRanges: [] }] } },
+        "1": {
+          type: "tables",
+          data: {
+            data: [
+              ["Component", "25 µl Reaction", "Final Concentration"],
+              ["5X Q5 Buffer", "5 µl", "1X"],
+              ["Template DNA", "variable", "&lt; 1,000 ng"],
+            ],
+          },
+        },
+      },
+    });
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ title: "Q5 PCR", steps: [{ step }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const out = await extractOaContent("https://www.protocols.io/view/q5-abc", { fetchImpl }, 20000);
+    expect(out?.text).toContain("| Component | 25 µl Reaction | Final Concentration |");
+    expect(out?.text).toContain("| 5X Q5 Buffer | 5 µl | 1X |");
+    expect(out?.text).toContain("< 1,000 ng"); // entity decoded, not &lt;
+    expect(out?.text).toContain("> Keep on ice."); // note rendered as a quote
+  });
+
+  it("parses a draft-js `description` instead of dumping raw JSON", async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          title: "T",
+          description: JSON.stringify({ blocks: [{ type: "unstyled", text: "High-fidelity polymerase.", entityRanges: [] }] }),
+          steps: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+    const out = await extractOaContent("https://www.protocols.io/view/t-abc", { fetchImpl }, 20000);
+    expect(out?.text).toContain("High-fidelity polymerase.");
+    expect(out?.text).not.toContain('{"blocks"');
+  });
+
+  it("leaves non-protocols.io hosts on the normal HTML path", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      return new Response("<html><body><article><p>Plain page.</p></article></body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+    const out = await extractOaContent("https://example.com/view/thing", { fetchImpl }, 20000);
+    expect(seen).toEqual(["https://example.com/view/thing"]);
+    expect(out?.format).toBe("html");
+  });
+});
+
+describe("extractOaContent — cookie-gated redirect loop", () => {
+  it("replays with the cookies a same-url redirect tried to set", async () => {
+    let calls = 0;
+    // Mimics idtdna.com: bounce a cookie-less client, serve a client that has one.
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      calls++;
+      const cookie = (init?.headers as Record<string, string>)?.["Cookie"];
+      if (cookie?.includes("SessionId=abc")) {
+        return new Response("<html><body><article><p>Digital PCR overview.</p></article></body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      if (init?.redirect === "manual") {
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": "SessionId=abc; path=/; HttpOnly", location: "/same" },
+        });
+      }
+      const err = new Error("fetch failed");
+      (err as Error & { cause?: unknown }).cause = { message: "redirect count exceeded" };
+      throw err;
+    }) as unknown as typeof fetch;
+
+    const out = await extractOaContent("https://www.idtdna.com/pages/x", { fetchImpl }, 20000);
+    expect(out?.text).toContain("Digital PCR overview.");
+    // Two attempts at the normal path (fetchWithRetry retries once), then the
+    // manual hop that harvests the cookie, then the hop that succeeds with it.
+    expect(calls).toBe(4);
+  });
+
+  it("gives up when the redirect sets no cookie", async () => {
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      if (init?.redirect === "manual") {
+        return new Response("", { status: 302, headers: { location: "/same" } });
+      }
+      const err = new Error("fetch failed");
+      (err as Error & { cause?: unknown }).cause = { message: "redirect count exceeded" };
+      throw err;
+    }) as unknown as typeof fetch;
+    expect(await extractOaContent("https://loop.example/x", { fetchImpl }, 20000)).toBeNull();
+  });
+});
+
+describe("extractOaContent — multi-hop cookie chain", () => {
+  it("carries cookies across a redirect chain that visits another path first", async () => {
+    // idtdna.com's real shape: the article bounces to a country-selection page,
+    // and only that page sets the cookie the article requires.
+    const visited: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      const cookie = (init?.headers as Record<string, string>)?.["Cookie"] ?? "";
+      if (init?.redirect !== "manual") {
+        const err = new Error("fetch failed");
+        (err as Error & { cause?: unknown }).cause = { message: "redirect count exceeded" };
+        throw err;
+      }
+      visited.push(new URL(url).pathname);
+      if (url.includes("/country")) {
+        return new Response("", {
+          status: 302,
+          headers: { "set-cookie": "Country=US; path=/", location: "/article" },
+        });
+      }
+      if (!cookie.includes("Country=US")) {
+        return new Response("", { status: 302, headers: { location: "/country?back=/article" } });
+      }
+      return new Response("<html><body><article><p>qPCR guidance.</p></article></body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+
+    const out = await extractOaContent("https://www.idtdna.com/article", { fetchImpl }, 20000);
+    expect(out?.text).toContain("qPCR guidance.");
+    expect(visited).toEqual(["/article", "/country", "/article"]);
+  });
+
+  it("stops after the hop cap instead of looping forever", async () => {
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (init?.redirect !== "manual") {
+        const err = new Error("fetch failed");
+        (err as Error & { cause?: unknown }).cause = { message: "redirect count exceeded" };
+        throw err;
+      }
+      const n = Number(new URL(url).searchParams.get("n") ?? "0");
+      return new Response("", { status: 302, headers: { location: `/x?n=${n + 1}` } });
+    }) as unknown as typeof fetch;
+    expect(await extractOaContent("https://endless.example/x?n=0", { fetchImpl }, 20000)).toBeNull();
+  });
+});
