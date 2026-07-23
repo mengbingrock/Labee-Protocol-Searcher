@@ -91,7 +91,7 @@ describe("MCP dispatch", () => {
             title: "Gibson Assembly Protocol",
             url: "https://www.neb.com/x",
             snippet: "steps",
-            fetchable: false,
+            fetchable: "none",
           },
         ],
       });
@@ -113,16 +113,19 @@ describe("MCP dispatch", () => {
   });
 
   describe("fetch tool", () => {
-    it("returns the link (not a scrape) for a bot-blocked url id", async () => {
+    // A non-http url can't be retrieved and needs no network to prove it, which
+    // keeps this hermetic; the 403-degrades and 200-extracts paths are covered
+    // with mocked fetches in test/fetch.test.ts.
+    it("returns the link for a url id that can't be retrieved", async () => {
       const res = await dispatch({
         jsonrpc: "2.0",
         id: 6,
         method: "tools/call",
-        params: { name: "fetch", arguments: { id: "url:https://www.neb.com/x" } },
+        params: { name: "fetch", arguments: { id: "url:mailto:orders@neb.com" } },
       });
       const text = (res!.result as { content: { text: string }[] }).content[0]!.text;
-      expect(text).toContain("https://www.neb.com/x");
-      expect(text.toLowerCase()).toContain("bot-block");
+      expect(text).toContain("mailto:orders@neb.com");
+      expect(text).toContain("_status: not-fetchable_");
     });
 
     it("errors when id is missing", async () => {

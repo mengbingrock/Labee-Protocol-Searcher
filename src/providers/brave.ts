@@ -12,6 +12,7 @@ import {
   type RawResult,
   type WebProvider,
   fetchWithTimeout,
+  stripTags,
 } from "./types.ts";
 
 const DEFAULT_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
@@ -67,7 +68,13 @@ export const braveProvider: WebProvider = {
       const results: RawResult[] = (json.web?.results ?? [])
         .filter((r) => r.url && r.title)
         .slice(0, limit)
-        .map((r) => ({ title: r.title!, url: r.url!, snippet: r.description ?? "" }));
+        // Brave marks the matched terms in both fields with <strong> and emits
+        // entities; strip both so snippets read as plain text.
+        .map((r) => ({
+          title: stripTags(r.title!),
+          url: r.url!,
+          snippet: stripTags(r.description ?? ""),
+        }));
       return results.length > 0
         ? { results, status: res.status }
         : { results: [], status: res.status, error: "Brave API returned no results" };

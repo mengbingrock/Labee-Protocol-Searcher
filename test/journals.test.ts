@@ -128,3 +128,44 @@ describe("searchJournal chain", () => {
     expect(out.error).toMatch(/crossref.*europepmc/s);
   });
 });
+
+describe("title / abstract text normalisation", () => {
+  it("unescapes double-escaped publisher markup instead of leaking entities", async () => {
+    // Crossref returns markup escaped as entities, so a tags-only strip leaves
+    // `&lt;i&gt;` in the title and a single strip+decode leaves a literal `<i>`.
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
+    const body = JSON.stringify({
+      message: {
+        items: [
+          {
+            title: ["RNA Extraction from &lt;i&gt;Synechocystis&lt;/i&gt; sp. PCC 6803"],
+            URL: "https://doi.org/10.1/x",
+            abstract: "<jats:p>Grow at 30 &deg;C in 5 &micro;L.</jats:p>",
+          },
+        ],
+      },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await searchJournal(STAR, "RNA", 3, { fetchImpl: f });
+    expect(out.results[0]!.title).toBe("RNA Extraction from Synechocystis sp. PCC 6803");
+    expect(out.results[0]!.snippet).toBe("Grow at 30 °C in 5 µL.");
+  });
+
+  it("caps a long abstract on a word boundary rather than mid-word", async () => {
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
+    const abstract = "supercalifragilistic ".repeat(40).trim(); // > 300 chars
+    const body = JSON.stringify({
+      message: { items: [{ title: ["T"], URL: "https://doi.org/10.1/x", abstract }] },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await searchJournal(STAR, "x", 3, { fetchImpl: f });
+    const snippet = out.results[0]!.snippet;
+    expect(snippet.length).toBeLessThanOrEqual(301);
+    expect(snippet.endsWith("…")).toBe(true);
+    // The kept text must be a whole-word prefix: the source continues with a
+    // space at exactly the cut point, so no word was sliced in half.
+    const kept = snippet.slice(0, -1);
+    expect(abstract.startsWith(kept)).toBe(true);
+    expect(abstract[kept.length]).toBe(" ");
+  });
+});

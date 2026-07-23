@@ -12,7 +12,7 @@
 
 import { type ProviderOptions, decodeEntities, fetchWithRetry, stripTags, userAgent } from "./providers/types.ts";
 
-export type ExtractFormat = "html" | "xml" | "pdf";
+export type ExtractFormat = "html" | "xml" | "pdf" | "json";
 
 export interface Extracted {
   text: string;
@@ -63,6 +63,204 @@ function cap(text: string, maxChars: number): string {
 }
 
 /**
+ * protocols.io renders its protocol pages client-side — the served HTML is a
+ * ~100-byte shell with no readable text — but appending `.json` to a
+ * `/view/<slug>` URL returns the whole protocol, no API token needed. (The
+ * documented /api/v3|v4 endpoints do require a bearer token; this one doesn't.)
+ */
+export function protocolsIoJsonUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)protocols\.io$/i.test(u.hostname)) return null;
+    if (!/^\/view\/[^/]+/.test(u.pathname)) return null;
+    if (u.pathname.endsWith(".json")) return url;
+    return `${u.origin}${u.pathname.replace(/\/+$/, "")}.json`;
+  } catch {
+    return null;
+  }
+}
+
+/** Render a protocols.io table entity (a 2D cell array) as a markdown table. */
+function renderTableEntity(data: unknown): string {
+  const rows = (data as { data?: unknown[][] })?.data;
+  if (!Array.isArray(rows) || rows.length === 0) return "";
+  // Cells carry inline markup (<strong>, and <br> separating sub-rows). Flatten
+  // both: a literal "<strong>Component</strong>" in a cell is just noise.
+  const cells = rows.map((r) =>
+    Array.isArray(r)
+      ? r.map((c) =>
+          decodeEntities(
+            String(c ?? "")
+              .replace(/<br\s*\/?>/gi, " / ")
+              .replace(/<[^>]+>/g, ""),
+          )
+            .replace(/\s+/g, " ")
+            .replace(/\|/g, "\\|")
+            .trim(),
+        )
+      : [],
+  );
+  const width = Math.max(...cells.map((r) => r.length));
+  if (width === 0) return "";
+  const pad = (r: string[]) => `| ${Array.from({ length: width }, (_, i) => r[i] ?? "").join(" | ")} |`;
+  const [head, ...body] = cells;
+  return [pad(head!), `|${" --- |".repeat(width)}`, ...body.map(pad)].join("\n");
+}
+
+/**
+ * Steps arrive as Draft.js state. Plain prose is in `blocks[].text`, but the
+ * reaction tables and notes — the part a bench scientist actually needs — are
+ * `atomic` blocks pointing into `entityMap`. Reading only `blocks[].text` gets
+ * you "Set up the following reaction:" and then silently drops the reaction.
+ */
+function draftJsText(step: unknown): string {
+  if (typeof step !== "string") return "";
+  try {
+    const parsed = JSON.parse(step) as {
+      blocks?: { text?: string; type?: string; entityRanges?: { key?: number }[] }[];
+      entityMap?: Record<string, { type?: string; data?: unknown }>;
+    };
+    const entities = parsed.entityMap ?? {};
+    const out: string[] = [];
+    for (const b of parsed.blocks ?? []) {
+      if (b.type === "atomic") {
+        for (const range of b.entityRanges ?? []) {
+          const ent = entities[String(range.key)];
+          if (!ent) continue;
+          if (ent.type === "tables") {
+            const t = renderTableEntity(ent.data);
+            if (t) out.push(t);
+          } else if (ent.type === "notes") {
+            // Notes nest another draft-js document.
+            const nested = draftJsText(JSON.stringify(ent.data));
+            if (nested) out.push(`> ${nested.split("\n").join("\n> ")}`);
+          }
+        }
+        continue;
+      }
+      const text = (b.text ?? "").trim();
+      if (text) out.push(text);
+    }
+    return out.join("\n");
+  } catch {
+    return "";
+  }
+}
+
+/** Render a protocols.io protocol JSON payload as readable markdown. */
+function renderProtocolsIo(payload: unknown): string {
+  const p = payload as {
+    title?: string;
+    description?: string;
+    authors?: { name?: string }[];
+    steps?: { step?: unknown }[];
+    document?: unknown;
+  };
+  if (!p || typeof p !== "object") return "";
+  const out: string[] = [];
+  if (p.title) out.push(`# ${p.title}`);
+  const authors = (p.authors ?? []).map((a) => a?.name).filter(Boolean);
+  if (authors.length) out.push(`_Authors: ${authors.join(", ")}_`);
+  // `description` is HTML on some protocols and draft-js JSON on others (NEB's
+  // workspace uses the latter). Try the structured parse first, or the raw JSON
+  // gets dumped into the output verbatim.
+  const desc = draftJsText(p.description) || stripTags(p.description ?? "").trim();
+  if (desc) out.push(desc);
+  const steps = Array.isArray(p.steps) ? p.steps : [];
+  let body = 0;
+  steps.forEach((s, i) => {
+    const text = draftJsText(s?.step);
+    if (text) {
+      body++;
+      out.push(`## Step ${i + 1}\n\n${text}`);
+    }
+  });
+  // Not every protocol is step-structured: narrative ones carry the whole thing
+  // in `document` (same draft-js shape) and ship an empty `steps` array. Without
+  // this they extract to a title and an author line and still report success.
+  if (body === 0) {
+    const doc = draftJsText(p.document);
+    if (doc) out.push(doc);
+  }
+  return out.join("\n\n").trim();
+}
+
+/** Does this error mean fetch gave up bouncing between redirects? */
+function isRedirectLoop(err: unknown): boolean {
+  const cause = (err as { cause?: { message?: string; code?: string } })?.cause;
+  const msg = `${cause?.message ?? ""} ${cause?.code ?? ""} ${(err as Error)?.message ?? ""}`;
+  return /redirect count exceeded|too many redirects|ERR_TOO_MANY_REDIRECTS/i.test(msg);
+}
+
+/** Absorb a response's Set-Cookie headers into `jar` (last value wins). */
+function harvestCookies(res: Response, jar: Map<string, string>): void {
+  for (const raw of res.headers.getSetCookie?.() ?? []) {
+    const pair = raw.split(";", 1)[0]!.trim();
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+  }
+}
+
+const MAX_REDIRECT_HOPS = 8;
+
+/**
+ * Follow redirects by hand, carrying cookies between hops the way a browser
+ * would. `fetch` has no cookie jar, so a site that gates content behind one
+ * (idtdna.com bounces you through a country-selection page that sets `Country`)
+ * redirects forever and fetch eventually throws.
+ */
+async function fetchFollowingWithCookies(
+  doFetch: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const jar = new Map<string, string>();
+  let current = url;
+  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+    const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
+    const res = await fetchWithRetry(
+      doFetch,
+      current,
+      {
+        ...init,
+        redirect: "manual",
+        headers: {
+          ...(init.headers as Record<string, string>),
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+      },
+      timeoutMs,
+      { retries: 0 },
+    );
+    harvestCookies(res, jar);
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get("location");
+    if (!location) return res;
+    current = new URL(location, current).toString();
+  }
+  throw new Error(`redirect count exceeded after ${MAX_REDIRECT_HOPS} hops`);
+}
+
+/**
+ * `fetchWithRetry`, falling back to manual cookie-carrying redirect following
+ * when — and only when — the plain request dies in a redirect loop.
+ */
+async function fetchAllowingCookieGate(
+  doFetch: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  try {
+    return await fetchWithRetry(doFetch, url, init, timeoutMs, { retries: 1 });
+  } catch (err) {
+    if (!isRedirectLoop(err)) throw err;
+    return fetchFollowingWithCookies(doFetch, url, init, timeoutMs);
+  }
+}
+
+/**
  * Fetch `url` and extract its readable text. Returns null on any failure
  * (non-200, oversized, unsupported/undecodable, or a PDF with no `unpdf`
  * available) so the caller can fall back to returning the bare link. Never
@@ -76,7 +274,24 @@ export async function extractOaContent(
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 15000;
   try {
-    const res = await fetchWithRetry(
+    const jsonUrl = protocolsIoJsonUrl(url);
+    if (jsonUrl) {
+      const jres = await fetchWithRetry(
+        doFetch,
+        jsonUrl,
+        { headers: { "User-Agent": userAgent(url.length), Accept: "application/json" } },
+        timeoutMs,
+        { retries: 1 },
+      );
+      if (jres.status === 200) {
+        const text = renderProtocolsIo(await jres.json());
+        if (text) return { text: cap(text, maxChars), format: "json" };
+      }
+      // Fall through to the HTML path — it will almost certainly come back
+      // empty, but a stub beats inventing a failure mode the caller can't see.
+    }
+
+    const res = await fetchAllowingCookieGate(
       doFetch,
       url,
       {
@@ -86,9 +301,9 @@ export async function extractOaContent(
         },
       },
       timeoutMs,
-      { retries: 1 },
     );
     if (res.status !== 200) return null;
+
 
     const ct = (res.headers.get("content-type") ?? "").toLowerCase();
     const len = Number(res.headers.get("content-length") ?? "0");

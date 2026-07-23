@@ -12,7 +12,7 @@
 import type { ProviderOptions, RawResult } from "./providers/types.ts";
 import { webSearch } from "./providers/registry.ts";
 import { searchJournal } from "./journals.ts";
-import { resolveVendors, getVendor, type Vendor } from "./vendors.ts";
+import { resolveVendors, getVendor, type Fetchability, type Vendor } from "./vendors.ts";
 import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
 
 export interface VendorResults {
@@ -111,7 +111,11 @@ export async function searchProtocols(
     return { query: "", vendors: [], unknownVendors: unknown, partial: false };
   }
   const limit = Math.max(1, Math.min(10, Math.floor(opts.limit ?? 5)));
-  const batchSize = Math.max(1, opts.batchSize ?? 6);
+  // One query per vendor. Batching several into `(site:a OR site:b) q` shares a
+  // single result budget, so a large domain crowds the others out and they come
+  // back empty even when they do have matching pages. Costs one search-provider
+  // call per vendor — raise `batchSize` to trade recall back for quota.
+  const batchSize = Math.max(1, opts.batchSize ?? 1);
   const concurrency = Math.max(1, opts.concurrency ?? 4);
   const providerOpts = opts.providerOpts ?? {};
 
@@ -216,9 +220,11 @@ export function renderMarkdown(resp: SearchResponse): string {
 // ---------------------------------------------------------------------------
 // Unified search: one flat, id-addressable result list across journals,
 // vendors, AND the REBASE enzyme database. Every result carries a stable `id`
-// (that `fetch` resolves) and a `fetchable` flag encoding whether its content
-// can be retrieved (open-access article / enzyme record) or is links-only (a
-// bot-blocked vendor page). This is the `search`/`fetch` connector shape.
+// (that `fetch` resolves) and a `fetchable` grade encoding how likely `fetch`
+// is to return real content: "full", "partial" (worth trying, may come back as
+// a link), or "none" (the site refuses automated requests). The grade comes
+// from the source's measured `fetchability` — see vendors.ts — so it can't
+// drift from what `fetch` actually does. This is the `search`/`fetch` shape.
 // ---------------------------------------------------------------------------
 
 export type ResultKind = "enzyme" | "article" | "vendor-page";
@@ -231,8 +237,8 @@ export interface UnifiedResult {
   title: string;
   url?: string;
   snippet?: string;
-  /** True when `fetch(id)` can return real content (vs. a bot-blocked page). */
-  fetchable: boolean;
+  /** How likely `fetch(id)` is to return real content. */
+  fetchable: Fetchability;
 }
 
 export interface SourceStatus {
@@ -263,15 +269,23 @@ export interface UnifiedOptions extends Omit<SearchOptions, "vendors"> {
   by?: "name" | "site";
 }
 
-/** Derive a fetchable id from a journal result URL (DOI / PMCID / PMID). */
-function idForArticleUrl(url: string): { id: string; fetchable: boolean } {
+/**
+ * Derive a fetchable id from a journal result URL (DOI / PMCID / PMID).
+ * `resolvable` says only whether we found an identifier `fetch` knows how to
+ * look up — whether that lookup finds open text is the journal's
+ * `fetchability`, which the caller applies.
+ */
+function idForArticleUrl(url: string): { id: string; resolvable: boolean } {
   const doi = /doi\.org\/(10\.\S+)/i.exec(url);
-  if (doi) return { id: `doi:${doi[1]}`, fetchable: true };
+  // JoVE mints a `-v` sibling DOI for the video edition of an article
+  // (10.3791/59550-v alongside 10.3791/59550). Europe PMC indexes only the
+  // article, so the video DOI resolves to nothing — normalise to the article.
+  if (doi) return { id: `doi:${doi[1]!.replace(/-v\d*$/i, "")}`, resolvable: true };
   const pmc = /(PMC\d+)/i.exec(url);
-  if (pmc) return { id: `pmcid:${pmc[1]!.toUpperCase()}`, fetchable: true };
+  if (pmc) return { id: `pmcid:${pmc[1]!.toUpperCase()}`, resolvable: true };
   const med = /europepmc\.org\/article\/MED\/(\d+)/i.exec(url);
-  if (med) return { id: `pmid:${med[1]}`, fetchable: true };
-  return { id: `url:${url}`, fetchable: false };
+  if (med) return { id: `pmid:${med[1]}`, resolvable: true };
+  return { id: `url:${url}`, resolvable: false };
 }
 
 export async function search(query: string, opts: UnifiedOptions = {}): Promise<UnifiedResponse> {
@@ -308,44 +322,59 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
     const vendor = getVendor(b.id);
     const kind = vendor?.kind ?? "vendor";
     // Echo the effective scoping so the agent can judge why a source was empty.
+    // Must mirror what searchProtocols actually sends (see the vendor loop) —
+    // an echo that adds quotes the real query never had reads as an exact-phrase
+    // search and invites "loosen the quoting" fixes for a non-existent problem.
     const effectiveQuery = vendor
       ? kind === "journal"
-        ? `"${trimmed}" in ${b.name}`
-        : `site:${vendor.ddgSite} "${trimmed}"`
+        ? `${trimmed} in ${b.name}`
+        : `site:${vendor.ddgSite} ${trimmed}`
       : undefined;
+    // Collect first, then drop same-id repeats within the source: normalising
+    // DOI variants (see idForArticleUrl) can collapse two hits onto one id, and
+    // a duplicate row just spends the caller's `fetch` budget twice.
+    const rows: UnifiedResult[] = [];
+    const seen = new Set<string>();
+    // An unknown source can't be graded; "partial" tells the agent to try and
+    // be ready for a link, which is the safe reading of "we don't know".
+    const grade: Fetchability = vendor?.fetchability ?? "partial";
+    for (const r of b.results) {
+      let id: string;
+      let fetchable: Fetchability;
+      if (kind === "journal") {
+        const article = idForArticleUrl(r.url);
+        id = article.id;
+        // A journal hit with no DOI/PMID/PMCID is a bare publisher URL, and
+        // those are exactly the paywalled pages the scholarly APIs exist to
+        // route around — never claim it's retrievable.
+        fetchable = article.resolvable ? grade : "none";
+      } else {
+        id = `url:${r.url}`;
+        fetchable = grade;
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      rows.push({
+        id,
+        source: b.id,
+        kind: kind === "journal" ? "article" : "vendor-page",
+        title: r.title,
+        url: r.url,
+        snippet: r.snippet,
+        fetchable,
+      });
+    }
+
     sources.push({
       id: b.id,
       name: b.name,
       kind,
       searchUrl: b.searchUrl,
       ...(effectiveQuery ? { query: effectiveQuery } : {}),
-      count: b.results.length,
+      count: rows.length,
       ...(b.error ? { error: b.error } : {}),
     });
-    for (const r of b.results) {
-      if (kind === "journal") {
-        const { id, fetchable } = idForArticleUrl(r.url);
-        results.push({
-          id,
-          source: b.id,
-          kind: "article",
-          title: r.title,
-          url: r.url,
-          snippet: r.snippet,
-          fetchable,
-        });
-      } else {
-        results.push({
-          id: `url:${r.url}`,
-          source: b.id,
-          kind: "vendor-page",
-          title: r.title,
-          url: r.url,
-          snippet: r.snippet,
-          fetchable: false,
-        });
-      }
-    }
+    results.push(...rows);
   }
 
   if (wantRebase) {
@@ -368,7 +397,8 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
           kind: "enzyme",
           title: h.title,
           snippet: h.snippet,
-          fetchable: true,
+          // The whole REBASE release is already parsed in memory by this point.
+          fetchable: "full",
         });
       }
       if (hits.length === 0) partial = true;
@@ -386,6 +416,13 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
 
   return { query: trimmed, results, sources, unknownSources: base.unknownVendors, partial };
 }
+
+/** How each fetchability grade reads in a result listing. */
+const FETCHABLE_LABEL: Record<Fetchability, string> = {
+  full: "fetchable",
+  partial: "may-not-fetch",
+  none: "links-only",
+};
 
 /** Render a UnifiedResponse as compact, model-friendly markdown with ids. */
 export function renderSearch(resp: UnifiedResponse): string {
@@ -414,7 +451,7 @@ export function renderSearch(resp: UnifiedResponse): string {
     for (const r of rs) {
       lines.push(`- ${r.url ? `[${r.title}](${r.url})` : r.title}`);
       lines.push(
-        `  \`${r.id}\`${r.fetchable ? " · fetchable" : " · links-only"}` +
+        `  \`${r.id}\` · ${FETCHABLE_LABEL[r.fetchable]}` +
           `${r.snippet ? ` — ${r.snippet}` : ""}`,
       );
     }
@@ -424,7 +461,9 @@ export function renderSearch(resp: UnifiedResponse): string {
   lines.push(
     `_${resp.results.length} result${resp.results.length === 1 ? "" : "s"} across ` +
       `${resp.sources.length} source${resp.sources.length === 1 ? "" : "s"}. ` +
-      "Call `fetch` with a result's id to read fetchable ones; open the search page for links-only sources._",
+      "Call `fetch` with a result's id to read it. `links-only` results can't be " +
+      "retrieved — open their url instead; `may-not-fetch` ones are worth trying " +
+      "but can come back as a link._",
   );
   return lines.join("\n");
 }

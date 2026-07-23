@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { search, renderSearch } from "./search.ts";
 import { fetchResource, fetchResources } from "./fetch.ts";
-import { VENDORS, VENDOR_IDS } from "./vendors.ts";
+import { VENDORS, VENDOR_IDS, type Fetchability } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
 import { journalProviderOrder } from "./journals.ts";
 
@@ -63,9 +63,10 @@ export const TOOLS = [
       "(Crossref/Europe PMC); vendors (Thermo Fisher, QIAGEN, NEB, Bio-Rad, Sigma-Aldrich, EMD " +
       "Millipore, Takara Bio, Promega, IDT) via web search; and restriction enzymes via REBASE (NEB's " +
       "open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a " +
-      "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` flag. Call " +
-      "`fetch` with a result's id to read its content; vendor pages are links-only (they bot-block " +
-      "direct fetches) — open their URL instead of scraping.",
+      "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — " +
+      "`fetchable`, `may-not-fetch`, or `links-only`. Call `fetch` with a result's id to read its " +
+      "content; vendor pages included. Don't spend a `fetch` on a `links-only` result — the site " +
+      "refuses automated requests and you already have its url.",
     inputSchema: {
       type: "object",
       properties: {
@@ -99,7 +100,9 @@ export const TOOLS = [
       "methylation sensitivity, and which vendors incl. NEB supply it — from REBASE, so no neb.com " +
       "scraping). `doi:` / `pmid:` / `pmcid:` returns open-access article full text (Europe PMC, then " +
       "Unpaywall), rendered section-by-section — pass `section` to read just one (e.g. 'Methods'). A " +
-      "`url:` vendor page is bot-blocked and can't be fetched — its link is returned instead. Pass " +
+      "`url:` page is fetched and its readable text extracted; most vendors work, but a few (notably " +
+      "neb.com, sigmaaldrich.com, emdmillipore.com) refuse automated requests and return their link " +
+      "instead — `search` grades each result so you know which to expect. Pass " +
       "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
       "enzyme names also work. Every result ends with a `_status: …_` line (ok, no-open-fulltext, " +
       "oa-link, not-fetchable, not-found, bad-id).",
@@ -143,10 +146,17 @@ function toolText(text: string, isError = false): unknown {
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   if (name === "list_sources") {
-    const lines = VENDORS.map((v) => {
-      const fetchable = v.kind === "journal" ? "fetchable (open-access)" : "links-only (bot-blocked)";
-      return `- ${v.id} [${v.kind}]: ${v.name} — ${v.blurb} (${fetchable})`;
-    });
+    // Read the grade off the source rather than inferring it from `kind` — some
+    // vendor pages extract fine and some journals are paywalled, so `kind` was
+    // never a reliable proxy for what `fetch` will do.
+    const FETCH_NOTE: Record<Fetchability, string> = {
+      full: "fetchable",
+      partial: "sometimes fetchable — may return a link instead",
+      none: "links-only — site refuses automated requests",
+    };
+    const lines = VENDORS.map(
+      (v) => `- ${v.id} [${v.kind}]: ${v.name} — ${v.blurb} (${FETCH_NOTE[v.fetchability]})`,
+    );
     lines.unshift(
       "- rebase [database]: REBASE — restriction-enzyme facts (recognition site, cut, methylation, " +
         "suppliers incl. NEB) (fetchable)",

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { searchProtocols, renderMarkdown } from "../src/search.ts";
+import { searchProtocols, renderMarkdown, search, renderSearch } from "../src/search.ts";
 
 // Lite-format markup mixing results from two vendors, returned for a combined
 // `(site:neb.com OR site:takarabio.com) ...` DuckDuckGo query.
@@ -111,5 +111,57 @@ describe("searchProtocols", () => {
       providerOpts: { fetchImpl: evil, timeoutMs: 400 },
     });
     expect(resp.vendors[0]!.results).toEqual([]);
+  });
+});
+
+describe("result fetchability", () => {
+  const env = { ...process.env };
+  afterEach(() => {
+    process.env = { ...env };
+  });
+
+  it("carries the source's grade onto its results instead of a blanket true", async () => {
+    delete process.env.PROTOCOLS_SEARCH_PROVIDER;
+    delete process.env.BRAVE_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    const f = (async (url: string) => {
+      // Both vendors answer from one combined DuckDuckGo query.
+      if (url.includes("duckduckgo")) return new Response(MIXED_LITE, { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await search("pcr", { sources: ["neb", "takarabio"], providerOpts: { fetchImpl: f } });
+    const neb = out.results.find((r) => r.source === "neb")!;
+    const takara = out.results.find((r) => r.source === "takarabio")!;
+    expect(neb.fetchable).toBe("none"); // neb.com 403s
+    expect(takara.fetchable).toBe("full"); // takarabio.com extracts fine
+  });
+
+  it("marks a journal hit with no resolvable identifier as links-only", async () => {
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
+    // A bare publisher URL — no DOI, PMID or PMCID for `fetch` to resolve.
+    const body = JSON.stringify({
+      message: { items: [{ title: ["Paywalled"], URL: "https://www.nature.com/articles/x" }] },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await search("x", { sources: ["star-protocols"], providerOpts: { fetchImpl: f } });
+    expect(out.results[0]!.id).toMatch(/^url:/);
+    expect(out.results[0]!.fetchable).toBe("none");
+  });
+
+  it("renders the three grades distinguishably", () => {
+    const md = renderSearch({
+      query: "q",
+      unknownSources: [],
+      partial: false,
+      sources: [{ id: "neb", name: "NEB", kind: "vendor", count: 3 }],
+      results: [
+        { id: "a", source: "neb", kind: "vendor-page", title: "A", fetchable: "full" },
+        { id: "b", source: "neb", kind: "vendor-page", title: "B", fetchable: "partial" },
+        { id: "c", source: "neb", kind: "vendor-page", title: "C", fetchable: "none" },
+      ],
+    });
+    expect(md).toContain("`a` · fetchable");
+    expect(md).toContain("`b` · may-not-fetch");
+    expect(md).toContain("`c` · links-only");
   });
 });

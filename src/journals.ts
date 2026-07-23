@@ -15,7 +15,12 @@
 //   - semanticscholar  — AI/citation-graph index (optional SEMANTIC_SCHOLAR_API_KEY)
 //   - pubmed           — NCBI E-utilities, esearch→esummary (optional NCBI_API_KEY)
 
-import { type ProviderOptions, type RawResult, fetchWithRetry } from "./providers/types.ts";
+import {
+  type ProviderOptions,
+  type RawResult,
+  fetchWithRetry,
+  stripTags,
+} from "./providers/types.ts";
 import type { JournalInfo } from "./vendors.ts";
 
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -35,9 +40,27 @@ type JournalSearchFn = (
   opts: ProviderOptions,
 ) => Promise<RawResult[]>;
 
+/**
+ * Titles and abstracts arrive as publisher markup, and some sources escape it:
+ * Crossref returns `&lt;i&gt;Synechocystis&lt;/i&gt;`, not `<i>…</i>`.
+ *
+ * `stripTags` strips tags and *then* decodes entities, so one pass over an
+ * escaped title only turns it into a tag-bearing one. A second pass removes
+ * those. Two is enough — nothing here is escaped three deep — and the pass is
+ * safe for a bare `&lt;` (the tag regex needs a closing `>` to match).
+ */
+function text(raw?: string): string {
+  return raw ? stripTags(stripTags(raw)) : "";
+}
+
+/** `text`, capped for use as a result snippet. */
 function clean(raw?: string): string {
-  if (!raw) return "";
-  return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  const t = text(raw);
+  // Cut on a word boundary and mark the elision, so snippets don't end mid-word.
+  if (t.length <= 300) return t;
+  const cut = t.slice(0, 300);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > 200 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
 function doiUrl(doi?: string): string {
@@ -77,7 +100,7 @@ const crossref: JournalSearchFn = async (journal, query, limit, opts) => {
   const json = (await res.json()) as CrossrefResponse;
   return (json.message?.items ?? [])
     .map((it) => ({
-      title: (it.title?.[0] ?? "").trim(),
+      title: text(it.title?.[0]),
       url: it.URL ?? doiUrl(it.DOI),
       snippet: clean(it.abstract),
     }))
@@ -105,7 +128,7 @@ const europepmc: JournalSearchFn = async (journal, query, limit, opts) => {
   const json = (await res.json()) as EuropePmcResponse;
   return (json.resultList?.result ?? [])
     .map((r) => ({
-      title: (r.title ?? "").replace(/<[^>]+>/g, "").trim(),
+      title: text(r.title),
       url: r.doi ? doiUrl(r.doi) : r.id ? `https://europepmc.org/article/MED/${r.id}` : "",
       snippet: clean(r.abstractText),
     }))
@@ -139,7 +162,7 @@ const openalex: JournalSearchFn = async (journal, query, limit, opts) => {
   const json = (await res.json()) as OpenAlexResponse;
   return (json.results ?? [])
     .map((w) => ({
-      title: (w.display_name ?? "").trim(),
+      title: text(w.display_name),
       url: doiUrl(w.doi) || w.id || "",
       snippet: fromInvertedIndex(w.abstract_inverted_index),
     }))
@@ -165,7 +188,7 @@ const semanticscholar: JournalSearchFn = async (journal, query, limit, opts) => 
   const json = (await res.json()) as SemanticScholarResponse;
   return (json.data ?? [])
     .map((w) => ({
-      title: (w.title ?? "").trim(),
+      title: text(w.title),
       url: doiUrl(w.externalIds?.DOI) || w.url || "",
       snippet: clean(w.abstract),
     }))
@@ -205,7 +228,7 @@ const pubmed: JournalSearchFn = async (journal, query, limit, opts) => {
       if (!it) return null;
       const doi = (it.articleids ?? []).find((a) => a.idtype === "doi")?.value;
       return {
-        title: (it.title ?? "").replace(/\.$/, "").trim(),
+        title: text(it.title).replace(/\.$/, ""),
         url: doi ? doiUrl(doi) : `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
         snippet: "",
       };

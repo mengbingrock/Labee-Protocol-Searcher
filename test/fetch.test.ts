@@ -18,17 +18,33 @@ const REBASE = `REBASE codes for commercial sources of enzymes
 `;
 const f = (async () => new Response(REBASE, { status: 200 })) as unknown as typeof fetch;
 
+/** A vendor that answers automated requests with 403 (e.g. neb.com). */
+const refuses = (async () => new Response("", { status: 403 })) as unknown as typeof fetch;
+
+/** A vendor that serves its page normally. */
+const servesHtml = (async () =>
+  new Response("<html><body><article><p>Denature at 98C for 30 seconds.</p></article></body></html>", {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  })) as unknown as typeof fetch;
+
 beforeEach(() => _resetRebaseCache());
 
 describe("fetchResource — scheme dispatch", () => {
-  it("returns the link (not a scrape) for a bot-blocked url id", async () => {
-    const out = await fetchResource("url:https://www.neb.com/x");
+  it("returns the link for a url id the site refuses", async () => {
+    const out = await fetchResource("url:https://www.neb.com/x", { fetchImpl: refuses });
     expect(out).toContain("https://www.neb.com/x");
-    expect(out.toLowerCase()).toContain("bot-block");
+    expect(out).toContain("_status: not-fetchable_");
   });
 
-  it("treats a bare https url as non-fetchable", async () => {
-    const out = await fetchResource("https://qiagen.com/y");
+  it("extracts the page text for a url id the site serves", async () => {
+    const out = await fetchResource("url:https://www.promega.com/y", { fetchImpl: servesHtml });
+    expect(out).toContain("Denature at 98C for 30 seconds");
+    expect(out).toContain("_status: ok_");
+  });
+
+  it("returns the link for a bare https url the site refuses", async () => {
+    const out = await fetchResource("https://qiagen.com/y", { fetchImpl: refuses });
     expect(out).toContain("https://qiagen.com/y");
   });
 
@@ -57,8 +73,10 @@ describe("fetchResource — bare-id inference", () => {
 });
 
 describe("fetchResource — status footers", () => {
-  it("tags a bot-blocked url as not-fetchable", async () => {
-    expect(await fetchResource("url:https://neb.com/x")).toContain("_status: not-fetchable_");
+  it("tags a refused url as not-fetchable", async () => {
+    expect(await fetchResource("url:https://neb.com/x", { fetchImpl: refuses })).toContain(
+      "_status: not-fetchable_",
+    );
   });
 
   it("tags an unrecognised id as bad-id", async () => {
@@ -71,16 +89,16 @@ describe("fetchResources — batch", () => {
     const rows = await fetchResources(["EcoRI", "url:https://neb.com/x"], { fetchImpl: f });
     expect(rows.map((r) => r.id)).toEqual(["EcoRI", "url:https://neb.com/x"]);
     expect(rows[0]!.text).toContain("# EcoRI");
-    expect(rows[1]!.text.toLowerCase()).toContain("bot-block");
+    expect(rows[1]!.text).toContain("https://neb.com/x");
   });
 
   it("isolates a failing id instead of sinking the batch", async () => {
     const boom = (async (url: string) => {
-      if (url.includes("neb.com")) return new Response("", { status: 200 }); // unused; url ids don't fetch
+      if (url.includes("neb.com")) return new Response("", { status: 403 });
       throw new Error("network down");
     }) as unknown as typeof fetch;
     const rows = await fetchResources(["10.1/x", "url:https://neb.com/x"], { fetchImpl: boom });
     expect(rows[0]!.text).toContain("_status: error_"); // DOI fetch threw
-    expect(rows[1]!.text.toLowerCase()).toContain("bot-block"); // url id still fine
+    expect(rows[1]!.text).toContain("_status: not-fetchable_"); // url id degraded cleanly
   });
 });
