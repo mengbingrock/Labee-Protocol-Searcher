@@ -14,11 +14,11 @@ restriction enzymes and fetches open-access protocol full text.
 ## Why this exists
 
 Direct/automated search of the target sites is **not reliably usable**. Fetching
-their search pages from a non-browser client returns, depending on the site and
+their *search pages* from a non-browser client returns, depending on the site and
 the moment, 403/503/login walls, or JavaScript-only shells with no results in
 the HTML:
 
-| Source | Direct fetch result |
+| Source | Direct fetch of its search page |
 | --- | --- |
 | cell.com/star-protocols | 403 Forbidden |
 | nature.com/nprot | 303 → login/paywall |
@@ -32,6 +32,50 @@ the HTML:
 | idtdna.com | connection blocked |
 
 So this server routes each source to the backend that *actually* works for it.
+
+## Sources
+
+Every source is **searchable**. Whether `fetch` can then retrieve a result's
+*content* is a separate question, and it does not follow from the source's kind —
+several vendor product pages extract cleanly while one of the journals is mostly
+paywalled. Each source therefore carries a measured grade, which `search` stamps
+onto every result it returns:
+
+| Grade | In results | Meaning |
+| --- | --- | --- |
+| ✅ `full` | `fetchable` | Retrieval essentially always works. |
+| ⚠️ `partial` | `may-not-fetch` | Works for some results, not others, and which is which isn't knowable at search time. Worth trying; be ready for a link back. |
+| ❌ `none` | `links-only` | The site refuses automated requests. `fetch` can only hand back the link, so spending a call buys nothing. |
+
+| Source | `id` | Kind | Searched via | `fetch` |
+| --- | --- | --- | --- | --- |
+| STAR Protocols (Cell Press) | `star-protocols` | journal | scholarly chain | ✅ open-access full text |
+| Nature Protocols | `nature-protocols` | journal | scholarly chain | ⚠️ mostly paywalled → citation link |
+| JoVE | `jove` | journal | scholarly chain | ⚠️ many DOIs aren't indexed by Europe PMC |
+| Bio-protocol | `bio-protocol` | journal | scholarly chain | ✅ open-access full text |
+| Current Protocols (Wiley) | `current-protocols` | journal | scholarly chain | ✅ open-access full text |
+| protocols.io | `protocols-io` | vendor | web search `site:` | ⚠️ public `/view/` protocols only |
+| Thermo Fisher Scientific | `thermofisher` | vendor | web search `site:` | ✅ product pages extract |
+| QIAGEN | `qiagen` | vendor | web search `site:` | ✅ product pages extract |
+| New England Biolabs | `neb` | vendor | web search `site:` | ❌ 403 — use `rebase` for enzyme facts |
+| Bio-Rad | `bio-rad` | vendor | web search `site:` | ⚠️ product pages extract, some category URLs 403 |
+| Sigma-Aldrich (Merck) | `sigma-aldrich` | vendor | web search `site:` | ❌ 403 |
+| EMD Millipore | `emd-millipore` | vendor | web search `site:` | ❌ 403 |
+| Takara Bio | `takarabio` | vendor | web search `site:` | ✅ product pages extract |
+| Promega | `promega` | vendor | web search `site:` | ✅ product pages extract |
+| Integrated DNA Technologies | `idt` | vendor | web search `site:` | ✅ once the country-cookie gate is followed |
+| REBASE (restriction enzymes) | `rebase` | database | in-memory index of the REBASE release file | ✅ structured record |
+
+The grades live on each source in [`src/vendors.ts`](src/vendors.ts) as a
+`fetchability` field, with a note on each recording why. `search`, the result
+renderer and `list_sources` all read that one field, so they can't drift apart
+from what `fetch` actually does. Re-check them if a site changes behaviour.
+
+**REBASE is why `neb.com` being blocked costs you little.** NEB publishes the
+canonical restriction-enzyme database as a keyless flat file, so recognition
+sites, cut positions, isoschizomers, methylation sensitivity and supplier lists
+come from the structured source rather than from scraping product pages. It's
+auto-included for enzyme-shaped queries (`EcoRI`, `GAATTC`).
 
 ## How it works
 
@@ -67,7 +111,8 @@ Three tools, in a `search` → `fetch` shape.
 
 - `search({ query, sources?, limit? })` — search journals, reagent vendors, and
   the REBASE enzyme database in one call. Returns a flat, ranked list where each
-  result carries a stable `id`, its `source`, and a `fetchable` flag. `sources`
+  result carries a stable `id`, its `source`, and a `fetchable` grade
+  (`fetchable` / `may-not-fetch` / `links-only` — see [Sources](#sources)). `sources`
   is an optional subset of source ids (REBASE is auto-included for enzyme-shaped
   queries like `EcoRI` / `GAATTC`); `limit` is per-source (1–10, default 5). Each
   source also echoes the effective scoped query it ran, so an empty result is
@@ -81,11 +126,142 @@ Three tools, in a `search` → `fetch` shape.
     only has a landing page or PDF (no PMC copy), `fetch` extracts the text
     itself — HTML, XML, and PDF (via `unpdf`). The Unpaywall tier needs
     `PROTOCOLS_CONTACT_EMAIL` set.
-  - `url:` vendor pages are bot-blocked and returned as a link, not scraped.
+  - `url:` → the page is fetched and its readable text extracted (HTML, XML, PDF;
+    protocols.io via its `.json`). Most vendors work; the few that refuse
+    automated requests return their link instead, graded `links-only` up front so
+    you needn't spend the call.
   - Pass `ids` to fetch a batch in one call. Every result ends with a
     `_status: …_` line (`ok`, `no-open-fulltext`, `oa-link`, `not-fetchable`,
     `not-found`, `bad-id`).
 - `list_sources()` — the source catalog and which providers are configured.
+
+## Worked example
+
+A real run against four sources — one journal, two vendors that behave
+differently, and the enzyme database. Output is verbatim, trimmed only where
+marked.
+
+```sh
+node dist/index.mjs --query "Gibson assembly" \
+  --sources star-protocols,neb,promega,rebase --limit 2
+```
+
+```markdown
+# Search: "Gibson assembly"
+
+## STAR Protocols (Cell Press) _(journal)_
+Query: `Gibson assembly in STAR Protocols (Cell Press)`
+Search page: https://www.cell.com/action/doSearch?journalCode=star-protocols&field1=AllField&text1=Gibson%20assembly
+- [In situ probe and inhibitory RNA synthesis using streamlined gene cloning with Gibson assembly](https://doi.org/10.1016/j.xpro.2022.101458)
+  `doi:10.1016/j.xpro.2022.101458` · fetchable
+
+## New England Biolabs (NEB) _(vendor)_
+Query: `site:neb.com Gibson assembly`
+Search page: https://www.neb.com/en-us/search?searchValue=Gibson%20assembly
+- [Gibson Assembly | NEB](https://www.neb.com/en-us/applications/cloning-and-synthetic-biology/dna-assembly-and-cloning/gibson-assembly)
+  `url:https://www.neb.com/…/gibson-assembly` · links-only — Daniel G. Gibson, of the
+  J. Craig Venter Institute, described a robust exonuclease-based method to assemble
+  DNA seamlessly and in the correct order, eponymously known as Gibson Assembly.
+
+## Promega _(vendor)_
+Query: `site:promega.com Gibson assembly`
+Search page: https://www.promega.com/search/?q=Gibson%20assembly
+- [Biomath Calculators | DNA Calculator | Vector Insert Ratio](https://www.promega.com/resources/tools/biomath/)
+  `url:https://www.promega.com/resources/tools/biomath/` · fetchable — DNA calculations
+  to convert µg to pmol for double-stranded and single-stranded DNA…
+
+## REBASE (restriction enzymes) _(database)_
+Query: `Gibson assembly (by name)`
+_No extractable results._
+
+_6 results across 4 sources. Call `fetch` with a result's id to read it. `links-only`
+results can't be retrieved — open their url instead; `may-not-fetch` ones are worth
+trying but can come back as a link._
+```
+
+Four things worth reading off that output:
+
+- **Every source reports the query it actually ran** (`site:neb.com Gibson
+  assembly`), so an empty result is explainable rather than mysterious. REBASE
+  correctly finds nothing — "Gibson assembly" is not an enzyme name.
+- **The two vendors are graded differently.** NEB is `links-only`; Promega is
+  `fetchable`. Inferring from "vendor" would have been wrong for one of them.
+- **The search page is always present**, even for the source that returned
+  nothing, because it's a constructed URL rather than a fetch.
+- **Snippets are the source's own text**, passed through — `search` never
+  summarises, and never calls a model.
+
+Then retrieve content by id. The grades hold:
+
+```sh
+node dist/index.mjs --fetch "doi:10.1016/j.xpro.2022.101458"
+```
+
+```markdown
+# In situ probe and inhibitory RNA synthesis using streamlined gene cloning with Gibson assembly.
+
+_Source: Europe PMC open-access full text (PMC9207569)._
+
+_Sections: Before you begin · Design primers with Gibson overhangs · Prepare Gibson
+Reaction Buffer and master mix · Key resources table · Materials and equipment ·
+Step-by-step method details · Total RNA extraction · cDNA synthesis · … _
+[full text follows, procedure sections first]
+```
+
+Pass `section` (`--fetch <id>` in the CLI reads the whole article; the MCP tool
+takes `{ id, section: "Troubleshooting" }`) to read one section instead.
+
+```sh
+node dist/index.mjs --fetch "url:https://www.neb.com/en-us/applications/…/gibson-assembly"
+```
+
+```markdown
+This page can't be retrieved automatically — the site refused the request.
+
+Open it directly: https://www.neb.com/en-us/applications/…/gibson-assembly
+
+_status: not-fetchable_
+```
+
+That's the `links-only` grade being honest rather than the tool failing — and it's
+why you'd go to REBASE for enzyme facts instead:
+
+```sh
+node dist/index.mjs --fetch "rebase:BsaI"
+```
+
+```markdown
+# BsaI
+
+- **Recognition site / cut:** `GGTCTC(1/5)`
+- **Isoschizomers:** Eco31I,Bli49I,Bli161I,Bso31I,BspTNI,Eco51I,PpaI,…
+- **Methylation sensitivity:** -4(6)
+- **Source organism:** Bacillus stearothermophilus 6-55
+- **Supplied by NEB.** Commercial suppliers: New England Biolabs, Sigma Chemical
+  Corporation, Vivantis Technologies.
+
+_Source: REBASE (rebase.neb.com), NEB's open Restriction Enzyme Database._
+
+_status: ok_
+```
+
+Every `fetch` result ends with a machine-readable `_status: …_` line, so a client
+can branch on the outcome without parsing prose.
+
+## Where things live
+
+| Concern | File |
+| --- | --- |
+| Source catalog, `site:` scoping, on-site search URLs, `fetchability` grades | [`src/vendors.ts`](src/vendors.ts) |
+| Search orchestration, per-vendor bucketing, id minting, result rendering | [`src/search.ts`](src/search.ts) |
+| Journal chain (Crossref → Europe PMC → OpenAlex → Semantic Scholar → PubMed) | [`src/journals.ts`](src/journals.ts) |
+| Web-search providers and their priority order | [`src/providers/`](src/providers/) |
+| Open-access full text: Europe PMC → Unpaywall, JATS → markdown | [`src/fulltext.ts`](src/fulltext.ts) |
+| Page text extraction (HTML/XML/PDF, protocols.io JSON, cookie gates) | [`src/extract.ts`](src/extract.ts) |
+| REBASE flat-file parser and enzyme lookup | [`src/rebase.ts`](src/rebase.ts) |
+| `fetch` id dispatch (`rebase:` / `doi:` / `pmid:` / `pmcid:` / `url:`) | [`src/fetch.ts`](src/fetch.ts) |
+| MCP tool definitions, JSON-RPC dispatch (stdio) | [`src/mcp.ts`](src/mcp.ts) |
+| Streamable HTTP transport | [`src/http.ts`](src/http.ts) |
 
 ## Install
 
@@ -214,10 +390,12 @@ bearer_token_env_var = "LABEE_MCP_TOKEN"
 
 ```sh
 # after `npm run build`:
-node dist/index.mjs --query "CRISPR knockout" --vendors star-protocols,nature-protocols
-node dist/index.mjs --query "Gibson assembly" --vendors neb --limit 3
+node dist/index.mjs --query "CRISPR knockout" --sources star-protocols,nature-protocols
+node dist/index.mjs --query "Gibson assembly" --sources neb --limit 3
 node dist/index.mjs --query "Q5 polymerase" --json
-node dist/index.mjs --list-vendors
+node dist/index.mjs --fetch "rebase:EcoRI"
+node dist/index.mjs --fetch "doi:10.1016/j.xpro.2022.101458"
+node dist/index.mjs --list-sources
 
 # or via the bin, when installed globally / with npx:
 npx @mengbingrock/labee-protocol-searcher --query "RNA extraction FFPE"
