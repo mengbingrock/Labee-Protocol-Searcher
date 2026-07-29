@@ -69,13 +69,69 @@ onto every result it returns:
 The grades live on each source in [`src/vendors.ts`](src/vendors.ts) as a
 `fetchability` field, with a note on each recording why. `search`, the result
 renderer and `list_sources` all read that one field, so they can't drift apart
-from what `fetch` actually does. Re-check them if a site changes behaviour.
+from what `fetch` actually does. Re-check them if a site changes behaviour —
+the [daily health check](#backend-health) tells you when to.
 
 **REBASE is why `neb.com` being blocked costs you little.** NEB publishes the
 canonical restriction-enzyme database as a keyless flat file, so recognition
 sites, cut positions, isoschizomers, methylation sensitivity and supplier lists
 come from the structured source rather than from scraping product pages. It's
 auto-included for enzyme-shaped queries (`EcoRI`, `GAATTC`).
+
+## Backend health
+
+Every backend this server talks to is third-party, and several of them change
+behaviour without notice: a search API starts rate-limiting, a vendor turns on a
+bot check. So the table below is measured rather than written — CI re-runs the
+probes daily and commits the result, which means a stale claim here is visible
+instead of silent. Run it yourself with `npm run health`.
+
+The declared grades are **not** rewritten automatically: one probe can't tell
+"always works" from "worked today". The check only flags a hard contradiction —
+a source graded `full` that refused the request, or one graded `none` that
+extracted cleanly — which is the signal to go re-grade it by hand.
+
+<!-- HEALTH:BEGIN -->
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-07-29T23:55Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+
+❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
+
+**Backends**
+
+| Backend | Chain | Today |
+| --- | --- | --- |
+| `crossref` | journal | ✅ 3 results |
+| `europepmc` | journal | ✅ 3 results |
+| `openalex` | journal | ✅ 3 results |
+| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
+| `pubmed` | journal | ✅ 3 results |
+| `brave` | web | ✅ 2 results |
+| `google` | web | — not configured |
+| `duckduckgo` | web | ❌ search returned HTTP 202 (via duckduckgo) |
+
+**Sources**
+
+| Source | Declared `fetch` | Search hits | Top result `fetch` |
+| --- | --- | --- | --- |
+| `star-protocols` | ✅ full | ✅ 3 | ✅ `ok` · Europe PMC |
+| `nature-protocols` | ⚠️ partial | ✅ 3 | ⚠️ `no-open-fulltext` · Unpaywall |
+| `jove` | ⚠️ partial | ✅ 2 | ✅ `ok` · Unpaywall |
+| `bio-protocol` | ✅ full | ✅ 3 | ✅ `ok` · Europe PMC |
+| `current-protocols` | ✅ full | ✅ 3 | ⚠️ `no-open-fulltext` · Unpaywall |
+| `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
+| `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
+| `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
+| `neb` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
+| `bio-rad` | ⚠️ partial | ✅ 3 | ✅ `ok` · html extraction |
+| `sigma-aldrich` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
+| `emd-millipore` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
+| `takarabio` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
+| `promega` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
+| `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
+| `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
+
+_A `partial` source showing `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
+<!-- HEALTH:END -->
 
 ## How it works
 
@@ -262,6 +318,7 @@ can branch on the outcome without parsing prose.
 | `fetch` id dispatch (`rebase:` / `doi:` / `pmid:` / `pmcid:` / `url:`) | [`src/fetch.ts`](src/fetch.ts) |
 | MCP tool definitions, JSON-RPC dispatch (stdio) | [`src/mcp.ts`](src/mcp.ts) |
 | Streamable HTTP transport | [`src/http.ts`](src/http.ts) |
+| Live backend probes that rewrite the health block above | [`scripts/health-check.mjs`](scripts/health-check.mjs) |
 
 ## Install
 
@@ -410,7 +467,21 @@ In dev, skip the build with `npm run dev -- --query "..."`
 npm run build      # bundle to dist/index.mjs
 npm run test       # vitest (parsers, providers, journals, search routing, MCP handshake)
 npm run typecheck
+npm run health     # probe every live backend, rewrite the health block in this README
 ```
+
+Two workflows run in CI: [`ci.yml`](.github/workflows/ci.yml) typechecks, tests
+and builds on every push and pull request, and
+[`health.yml`](.github/workflows/health.yml) runs the live probes daily at 05:17
+UTC and commits the refreshed health block. The health job is offline-safe in the
+sense that matters: absent API keys are reported as *not configured* rather than
+as outages, so a fork without secrets still publishes a truthful table. Set
+`BRAVE_API_KEY` (repository secret) and `PROTOCOLS_CONTACT_EMAIL` (repository
+variable) to exercise the vendor chain and the Unpaywall tier; `GOOGLE_API_KEY` +
+`GOOGLE_CSE_CX`, `SEMANTIC_SCHOLAR_API_KEY` and `NCBI_API_KEY` are optional.
+
+`npm run health` hits live third-party APIs — roughly 25 requests — so run it
+when you want a fresh reading, not in a loop.
 
 ## License
 

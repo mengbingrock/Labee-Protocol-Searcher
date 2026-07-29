@@ -82,13 +82,20 @@ async function runHttp(args: CliArgs): Promise<void> {
 async function runCli(args: CliArgs): Promise<void> {
   if (args.listSources) {
     const rows = [
-      { id: "rebase", name: "REBASE (restriction enzymes)", kind: "database" },
-      ...VENDORS.map((v) => ({ id: v.id, name: v.name, kind: v.kind })),
+      { id: "rebase", name: "REBASE (restriction enzymes)", kind: "database", fetchability: "full" },
+      ...VENDORS.map((v) => ({
+        id: v.id,
+        name: v.name,
+        kind: v.kind,
+        fetchability: v.fetchability,
+      })),
     ];
     if (args.json) {
       process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
     } else {
-      for (const r of rows) process.stdout.write(`${r.id}\t[${r.kind}] ${r.name}\n`);
+      for (const r of rows) {
+        process.stdout.write(`${r.id}\t[${r.kind}] ${r.name}\t${r.fetchability}\n`);
+      }
     }
     return;
   }
