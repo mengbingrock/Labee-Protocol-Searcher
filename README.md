@@ -92,9 +92,11 @@ a source graded `full` that refused the request, or one graded `none` that
 extracted cleanly — which is the signal to go re-grade it by hand.
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-07-29T23:55Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-07-30T00:05Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 ❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
+
+⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `sigma-aldrich` (graded `none` but the page extracted fine).
 
 **Backends**
 
@@ -123,7 +125,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `neb` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
 | `bio-rad` | ⚠️ partial | ✅ 3 | ✅ `ok` · html extraction |
-| `sigma-aldrich` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
+| `sigma-aldrich` | ❌ none | ✅ 3 | ✅ `ok` · html extraction |
 | `emd-millipore` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
 | `takarabio` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `promega` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
