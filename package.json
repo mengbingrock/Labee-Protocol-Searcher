@@ -20,6 +20,7 @@
     "start": "node dist/index.mjs",
     "search": "node --experimental-strip-types src/index.ts --query",
     "typecheck": "tsc --noEmit",
+    "health": "npm run build && node scripts/health-check.mjs --write",
     "test": "vitest run --passWithNoTests",
     "prepublishOnly": "npm run build"
   },

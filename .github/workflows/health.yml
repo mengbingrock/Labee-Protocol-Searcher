@@ -1,0 +1,74 @@
+name: Backend health
+
+# Probes every third-party backend and commits the measured result into the
+# README's health block. Runs daily because the failure mode this catches is a
+# provider changing behaviour on its own schedule, not a change to this repo.
+
+on:
+  schedule:
+    # 05:17 UTC — off the hour, since the top of the hour is when everyone
+    # else's cron jobs hit the same public APIs.
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+# Never let two runs race on the same commit.
+concurrency:
+  group: backend-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      # The probes drive dist/index.mjs, so the bundle has to exist first.
+      - run: npm run build
+
+      - name: Probe backends and update README
+        env:
+          # Optional. Absent keys are reported as "not configured" rather than
+          # as outages, so a fork without secrets still gets a truthful table.
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CSE_CX: ${{ secrets.GOOGLE_CSE_CX }}
+          SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          # Required by the Unpaywall tier of `fetch` (it's the `email=` param).
+          PROTOCOLS_CONTACT_EMAIL: ${{ vars.PROTOCOLS_CONTACT_EMAIL }}
+        run: node scripts/health-check.mjs --write --json-out health-report.json
+
+      # Keep the raw numbers even on a day the README doesn't change, so a
+      # regression can be dated afterwards.
+      - name: Upload raw report
+        uses: actions/upload-artifact@v4
+        with:
+          name: health-report
+          path: health-report.json
+          retention-days: 90
+
+      # The block carries a "last run" stamp, so a healthy day still produces a
+      # one-line diff. That's deliberate: the point is provable freshness, and a
+      # stamp that only moved on a failure would read as stale when all is well.
+      - name: Commit the refreshed block
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README unchanged (probe produced identical output) — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          # [skip ci] so the daily doc commit doesn't re-trigger the test workflow.
+          git commit -m "chore: daily backend health check [skip ci]"
+          git push
