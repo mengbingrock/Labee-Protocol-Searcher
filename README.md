@@ -92,7 +92,7 @@ a source graded `full` that refused the request, or one graded `none` that
 extracted cleanly — which is the signal to go re-grade it by hand.
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-01T07:38Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-02T07:42Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 ❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
