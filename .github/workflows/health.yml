@@ -3,6 +3,10 @@ name: Backend health
 # Probes every third-party backend and commits the measured result into the
 # README's health block. Runs daily because the failure mode this catches is a
 # provider changing behaviour on its own schedule, not a change to this repo.
+#
+# Every run is also appended to health-history.jsonl, so the record is a
+# day-by-day series rather than only the latest snapshot: that's what separates
+# "this broke last night" from "this has been down for two weeks".
 
 on:
   schedule:
@@ -48,8 +52,9 @@ jobs:
           PROTOCOLS_CONTACT_EMAIL: ${{ vars.PROTOCOLS_CONTACT_EMAIL }}
         run: node scripts/health-check.mjs --write --json-out health-report.json
 
-      # Keep the raw numbers even on a day the README doesn't change, so a
-      # regression can be dated afterwards.
+      # The full per-source detail of a single run, kept for 90 days. The
+      # committed history file holds the summary of every run forever; this
+      # artifact is the place to go for the exact errors behind one bad day.
       - name: Upload raw report
         uses: actions/upload-artifact@v4
         with:
@@ -57,18 +62,22 @@ jobs:
           path: health-report.json
           retention-days: 90
 
-      # The block carries a "last run" stamp, so a healthy day still produces a
-      # one-line diff. That's deliberate: the point is provable freshness, and a
-      # stamp that only moved on a failure would read as stale when all is well.
-      - name: Commit the refreshed block
+      # The block carries a "last run" stamp and the history file gains a line,
+      # so a healthy day still produces a diff. That's deliberate: the point is
+      # provable freshness, and a record that only moved on a failure would read
+      # as stale exactly when everything is fine.
+      - name: Commit the refreshed block and history
         run: |
-          if git diff --quiet -- README.md; then
-            echo "README unchanged (probe produced identical output) — nothing to commit."
+          if git diff --quiet -- README.md health-history.jsonl; then
+            echo "No change to README.md or health-history.jsonl — nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
+          git add README.md health-history.jsonl
           # [skip ci] so the daily doc commit doesn't re-trigger the test workflow.
-          git commit -m "chore: daily backend health check [skip ci]"
+          git commit -m "chore: daily backend health check $(date -u +%Y-%m-%d) [skip ci]"
+          # A concurrent push (another workflow, a merge) would otherwise fail
+          # the job and silently drop the day's record.
+          git pull --rebase --autostash
           git push
