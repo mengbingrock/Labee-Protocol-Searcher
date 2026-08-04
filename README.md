@@ -91,6 +91,12 @@ The declared grades are **not** rewritten automatically: one probe can't tell
 a source graded `full` that refused the request, or one graded `none` that
 extracted cleanly — which is the signal to go re-grade it by hand.
 
+Nothing here is overwritten, either. Today's numbers go on top, but every run is
+also appended to [`health-history.jsonl`](health-history.jsonl) and the last 30
+days stay in the table below — a snapshot alone can't distinguish a backend that
+broke overnight from one that has been down for a fortnight, and only the second
+is a reason to re-route a chain.
+
 <!-- HEALTH:BEGIN -->
 _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-04T07:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
@@ -133,6 +139,14 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
 _A `partial` source showing `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
+
+**Daily history**
+
+| Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
+| --- | --- | --- | --- | --- | --- |
+| 2026-07-30 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
+
+_One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
 
 ## How it works
@@ -321,6 +335,7 @@ can branch on the outcome without parsing prose.
 | MCP tool definitions, JSON-RPC dispatch (stdio) | [`src/mcp.ts`](src/mcp.ts) |
 | Streamable HTTP transport | [`src/http.ts`](src/http.ts) |
 | Live backend probes that rewrite the health block above | [`scripts/health-check.mjs`](scripts/health-check.mjs) |
+| One summary line per health run, appended forever (JSONL) | [`health-history.jsonl`](health-history.jsonl) |
 
 ## Install
 
@@ -472,12 +487,20 @@ npm run typecheck
 npm run health     # probe every live backend, rewrite the health block in this README
 ```
 
+`npm run health` also appends a summary line for the run to
+`health-history.jsonl`. Add `--no-history` (`node scripts/health-check.mjs
+--write --no-history`) when you're re-running probes to debug one source and
+don't want that noise in the record; without `--write` nothing is recorded at
+all and the block is only printed.
+
 Two workflows run in CI: [`ci.yml`](.github/workflows/ci.yml) typechecks, tests
 and builds on every push and pull request, and
 [`health.yml`](.github/workflows/health.yml) runs the live probes daily at 05:17
-UTC and commits the refreshed health block. The health job is offline-safe in the
-sense that matters: absent API keys are reported as *not configured* rather than
-as outages, so a fork without secrets still publishes a truthful table. Set
+UTC, then commits both the refreshed health block and the day's history line, so
+the record accumulates instead of being replaced. The health job is offline-safe
+in the sense that matters: absent API keys are reported as *not configured*
+rather than as outages, so a fork without secrets still publishes a truthful
+table. Set
 `BRAVE_API_KEY` (repository secret) and `PROTOCOLS_CONTACT_EMAIL` (repository
 variable) to exercise the vendor chain and the Unpaywall tier; `GOOGLE_API_KEY` +
 `GOOGLE_CSE_CX`, `SEMANTIC_SCHOLAR_API_KEY` and `NCBI_API_KEY` are optional.

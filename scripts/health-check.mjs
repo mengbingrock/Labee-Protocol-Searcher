@@ -5,6 +5,12 @@
 //   node scripts/health-check.mjs                       # print the block
 //   node scripts/health-check.mjs --write               # splice it into README.md
 //   node scripts/health-check.mjs --json-out h.json     # also emit raw results
+//   node scripts/health-check.mjs --write --no-history  # don't record the run
+//
+// Every run is also appended to health-history.jsonl, and the README carries a
+// day-by-day table built from it. Today's snapshot alone can't tell "this
+// backend broke overnight" from "this backend has been down for a fortnight",
+// which is the difference between an incident and a source worth dropping.
 //
 // Everything runs through the built CLI (`dist/index.mjs`), on purpose: the
 // probes then exercise the shipped artifact rather than the sources, and the
@@ -24,8 +30,12 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = resolve(ROOT, "dist/index.mjs");
 const README = resolve(ROOT, "README.md");
+const HISTORY = resolve(ROOT, "health-history.jsonl");
 const BEGIN = "<!-- HEALTH:BEGIN -->";
 const END = "<!-- HEALTH:END -->";
+// How many days the README table shows. The file keeps every run forever — this
+// only bounds how much of it is pasted into the README.
+const HISTORY_DAYS = Number(process.env.HEALTH_HISTORY_DAYS || 30);
 
 // One keyword for every source, so today's numbers are comparable with
 // yesterday's. Overridable to re-check a specific regression.
@@ -268,7 +278,112 @@ function fetchCell(row) {
 
 const GRADE_LABEL = { full: "✅ full", partial: "⚠️ partial", none: "❌ none" };
 
-function renderBlock(report) {
+/**
+ * One run boiled down to the handful of numbers worth keeping forever. Storing
+ * the counts rather than the full report keeps a year of history at a few tens
+ * of kilobytes, and keeps the record readable in a diff.
+ */
+export function summarize(report) {
+  const configured = report.providers.filter((p) => p.state !== "unconfigured");
+  const sources = report.sources ?? [];
+  return {
+    date: report.generatedAt.slice(0, 10),
+    at: report.generatedAt,
+    backendsUp: configured.filter((p) => p.state === "ok").length,
+    backendsConfigured: configured.length,
+    backendsUnconfigured: report.providers.length - configured.length,
+    down: report.providers.filter((p) => p.state === "down").map((p) => p.id),
+    sourcesWithHits: sources.filter((s) => s.count > 0).length,
+    sourcesProbed: sources.length,
+    fetchOk: sources.filter((s) => s.fetchStatus === "ok").length,
+    drift: sources.filter((s) => s.drift).map((s) => s.id),
+    sweepFailed: Boolean(report.searchError),
+  };
+}
+
+/** Parse the JSONL log, skipping anything unreadable rather than losing the rest. */
+export function parseHistory(text) {
+  const out = [];
+  for (const line of (text || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const row = JSON.parse(trimmed);
+      if (row && typeof row.at === "string") out.push(row);
+    } catch {
+      // A corrupted line is dropped, not fatal: a broken byte somewhere in the
+      // log must not stop today's run from being recorded.
+    }
+  }
+  return out;
+}
+
+/**
+ * Append `record`, keeping the log in run order. A record with an `at` stamp
+ * already present replaces it, so re-running the script within the same minute
+ * (or a CI job retried on the same commit) updates that run instead of
+ * double-counting it.
+ */
+export function appendHistory(records, record) {
+  const kept = records.filter((r) => r.at !== record.at);
+  kept.push(record);
+  kept.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return kept;
+}
+
+/**
+ * The rows the README shows: newest first, one per UTC day. A day with several
+ * runs is represented by its last one — the file still holds them all, and a
+ * table with three rows dated the same day reads as a bug, not as history.
+ */
+export function historyRows(records, limit = HISTORY_DAYS) {
+  const byDay = new Map();
+  for (const r of records) {
+    const day = r.date || r.at.slice(0, 10);
+    const prev = byDay.get(day);
+    const runs = (prev?.runs ?? 0) + 1;
+    if (!prev || prev.at <= r.at) byDay.set(day, { ...r, date: day, runs });
+    else prev.runs = runs;
+  }
+  return [...byDay.values()].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, limit);
+}
+
+function ratio(ok, total) {
+  if (!total) return NA;
+  const icon = ok === total ? OK : ok === 0 ? BAD : WARN;
+  return `${icon} ${ok}/${total}`;
+}
+
+function renderHistory(records) {
+  const rows = historyRows(records);
+  const lines = ["**Daily history**", ""];
+  if (rows.length === 0) {
+    lines.push("_No runs recorded yet — the next daily run starts the log._");
+    return lines;
+  }
+  lines.push("| Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
+  for (const r of rows) {
+    const sources = r.sweepFailed
+      ? `${BAD} sweep failed`
+      : ratio(r.sourcesWithHits, r.sourcesProbed);
+    const fetched = r.sweepFailed ? NA : ratio(r.fetchOk, r.sourcesProbed);
+    const list = (ids) => (ids?.length ? ids.map((id) => `\`${id}\``).join(", ") : NA);
+    lines.push(
+      `| ${r.date} | ${ratio(r.backendsUp, r.backendsConfigured)} | ${sources} | ${fetched} | ` +
+        `${list(r.down)} | ${list(r.drift)} |`,
+    );
+  }
+  lines.push("");
+  lines.push(
+    `_One row per day, most recent first, last ${HISTORY_DAYS} days. Every run — including ` +
+      "extra same-day ones — is kept in " +
+      "[`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._",
+  );
+  return lines;
+}
+
+function renderBlock(report, history = []) {
   const { generatedAt, query, enzyme, providers, sources, searchError } = report;
   const drifted = sources.filter((s) => s.drift);
   const downBackends = providers.filter((p) => p.state === "down");
@@ -326,6 +441,9 @@ function renderBlock(report) {
     "_A `partial` source showing `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. " +
       "Every ❌ above is a second failed attempt — probes retry once before being recorded as down._",
   );
+  lines.push("");
+
+  lines.push(...renderHistory(history));
   return lines.join("\n");
 }
 
@@ -340,9 +458,21 @@ async function declaredGrades() {
   return map;
 }
 
+async function readHistory() {
+  try {
+    return parseHistory(await readFile(HISTORY, "utf8"));
+  } catch (err) {
+    // No log yet is the normal first-run case; anything else is worth saying out
+    // loud, since silently starting a fresh log would erase the record.
+    if (err.code !== "ENOENT") process.stderr.write(`could not read ${HISTORY}: ${err.message}\n`);
+    return [];
+  }
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const write = argv.includes("--write");
+  const recordHistory = write && !argv.includes("--no-history");
   const jsonOutIdx = argv.indexOf("--json-out");
   const jsonOut = jsonOutIdx === -1 ? "" : argv[jsonOutIdx + 1];
 
@@ -368,7 +498,12 @@ async function main() {
     sources,
     searchError,
   };
-  const block = renderBlock(report);
+
+  // Read the log first so a dry run still prints the real history, then record
+  // today's run only when we're actually publishing it.
+  let history = await readHistory();
+  if (recordHistory) history = appendHistory(history, summarize(report));
+  const block = renderBlock(report, history);
 
   if (jsonOut) await writeFile(jsonOut, JSON.stringify(report, null, 2) + "\n");
 
@@ -377,6 +512,10 @@ async function main() {
     return;
   }
 
+  if (recordHistory) {
+    await writeFile(HISTORY, history.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    process.stderr.write(`run appended to ${HISTORY} (${history.length} recorded)\n`);
+  }
   await writeFile(README, spliceBlock(await readFile(README, "utf8"), block));
   process.stderr.write(`health block written to ${README}\n`);
 }
@@ -396,7 +535,7 @@ export function spliceBlock(readme, block) {
   return readme.slice(0, start + BEGIN.length) + "\n" + block + "\n" + readme.slice(end);
 }
 
-export { statusOf, tierOf, driftOf, renderBlock };
+export { statusOf, tierOf, driftOf, renderBlock, renderHistory };
 
 // Only run when invoked as a script, so the helpers above stay importable.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
