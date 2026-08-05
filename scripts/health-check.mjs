@@ -125,9 +125,15 @@ function statusOf(text) {
   return all.length > 0 ? all.at(-1)[1] : "no-status";
 }
 
-/** Which retrieval tier answered, read off the `_Source:` line. */
+/**
+ * Which retrieval tier answered, read off the `_Source:` line. Ordered most
+ * specific first: an Unpaywall-recovered PMCID rendered from NCBI should be
+ * reported as NCBI, since that's the endpoint whose behaviour is being measured.
+ */
 function tierOf(text) {
-  if (/Europe PMC open-access full text/.test(text)) return "Europe PMC";
+  if (/NCBI E-utilities/.test(text)) return "NCBI author manuscript";
+  if (/Europe PMC abstract/.test(text)) return "Europe PMC abstract";
+  if (/Europe PMC[^.]*full text/.test(text)) return "Europe PMC";
   if (/Unpaywall/.test(text)) return "Unpaywall";
   const m = /\(([a-z]+) extraction\)/.exec(text);
   return m ? `${m[1]} extraction` : "";
@@ -247,7 +253,7 @@ async function probeSources(declared) {
 /**
  * Only hard contradictions count as drift. A `partial` source can legitimately
  * return either outcome, and a `full` source that came back `no-open-fulltext`
- * may just have a paywalled top hit today.
+ * or `abstract-only` may just have a paywalled top hit today.
  */
 function driftOf(row) {
   if (row.declared === "full" && row.fetchStatus === "not-fetchable") {
@@ -438,7 +444,7 @@ function renderBlock(report, history = []) {
   }
   lines.push("");
   lines.push(
-    "_A `partial` source showing `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. " +
+    "_A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. " +
       "Every ❌ above is a second failed attempt — probes retry once before being recorded as down._",
   );
   lines.push("");

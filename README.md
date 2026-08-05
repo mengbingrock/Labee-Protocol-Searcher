@@ -50,7 +50,7 @@ onto every result it returns:
 | Source | `id` | Kind | Searched via | `fetch` |
 | --- | --- | --- | --- | --- |
 | STAR Protocols (Cell Press) | `star-protocols` | journal | scholarly chain | ✅ open-access full text |
-| Nature Protocols | `nature-protocols` | journal | scholarly chain | ⚠️ mostly paywalled → citation link |
+| Nature Protocols | `nature-protocols` | journal | scholarly chain | ⚠️ paywalled, but ~26% is deposited in PMC and readable; else the abstract |
 | JoVE | `jove` | journal | scholarly chain | ⚠️ many DOIs aren't indexed by Europe PMC |
 | Bio-protocol | `bio-protocol` | journal | scholarly chain | ✅ open-access full text |
 | Current Protocols (Wiley) | `current-protocols` | journal | scholarly chain | ✅ open-access full text |
@@ -193,18 +193,23 @@ Three tools, in a `search` → `fetch` shape.
   - `rebase:<enzyme>` → the structured REBASE record (cut position,
     isoschizomers, methylation sensitivity, source organism, suppliers).
   - `doi:` / `pmid:` / `pmcid:` (or a bare identifier) → open-access full text via
-    **Europe PMC → Unpaywall**, rendered section-by-section. Pass `section` (a
-    title substring, e.g. `Methods`) to read just one section. When Unpaywall
-    only has a landing page or PDF (no PMC copy), `fetch` extracts the text
-    itself — HTML, XML, and PDF (via `unpdf`). The Unpaywall tier needs
+    **Europe PMC → NCBI → Unpaywall → abstract**, rendered section-by-section.
+    Pass `section` (a title substring, e.g. `Methods`) to read just one section.
+    Europe PMC serves only its open-access subset, so a PMCID it 404s on is
+    retried at NCBI, which also serves PMC *author manuscripts* — that one tier
+    is what makes a paywalled-journal protocol readable when its authors
+    deposited it. When Unpaywall only has a landing page or PDF (no PMC copy),
+    `fetch` extracts the text itself — HTML, XML, and PDF (via `unpdf`). If the
+    article is closed everywhere, the last tier returns its abstract and MeSH
+    terms rather than a bare link. The Unpaywall tier needs
     `PROTOCOLS_CONTACT_EMAIL` set.
   - `url:` → the page is fetched and its readable text extracted (HTML, XML, PDF;
     protocols.io via its `.json`). Most vendors work; the few that refuse
     automated requests return their link instead, graded `links-only` up front so
     you needn't spend the call.
   - Pass `ids` to fetch a batch in one call. Every result ends with a
-    `_status: …_` line (`ok`, `no-open-fulltext`, `oa-link`, `not-fetchable`,
-    `not-found`, `bad-id`).
+    `_status: …_` line (`ok`, `abstract-only`, `no-open-fulltext`, `oa-link`,
+    `not-fetchable`, `not-found`, `bad-id`).
 - `list_sources()` — the source catalog and which providers are configured.
 
 ## Worked example
@@ -328,7 +333,7 @@ can branch on the outcome without parsing prose.
 | Search orchestration, per-vendor bucketing, id minting, result rendering | [`src/search.ts`](src/search.ts) |
 | Journal chain (Crossref → Europe PMC → OpenAlex → Semantic Scholar → PubMed) | [`src/journals.ts`](src/journals.ts) |
 | Web-search providers and their priority order | [`src/providers/`](src/providers/) |
-| Open-access full text: Europe PMC → Unpaywall, JATS → markdown | [`src/fulltext.ts`](src/fulltext.ts) |
+| Open-access full text: Europe PMC → NCBI → Unpaywall → abstract, JATS → markdown | [`src/fulltext.ts`](src/fulltext.ts) |
 | Page text extraction (HTML/XML/PDF, protocols.io JSON, cookie gates) | [`src/extract.ts`](src/extract.ts) |
 | REBASE flat-file parser and enzyme lookup | [`src/rebase.ts`](src/rebase.ts) |
 | `fetch` id dispatch (`rebase:` / `doi:` / `pmid:` / `pmcid:` / `url:`) | [`src/fetch.ts`](src/fetch.ts) |

@@ -85,7 +85,8 @@ export const VENDORS: Vendor[] = [
     name: "Nature Protocols",
     blurb: "Peer-reviewed protocols across the life sciences.",
     kind: "journal",
-    // mostly paywalled; `fetch` usually returns a citation link.
+    // Mostly paywalled, but ~26% of the journal is deposited in PMC as author
+    // manuscripts that NCBI serves in full; the rest returns the abstract.
     fetchability: "partial",
     ddgSite: "nature.com/nprot",
     journal: {

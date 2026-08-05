@@ -8,18 +8,35 @@
 //   1. Resolve the caller's id (DOI / PMID / PMCID) to a PMCID via Europe PMC.
 //   2. GET {source}/{pmcid}/fullTextXML and render the JATS to section-aware
 //      markdown (procedure sections first; optional single-section filter).
-//   3. No PMCID (or the XML failed)? Ask Unpaywall for an open-access copy — it
-//      often points back at a PMC record we can still render, or at least a
-//      direct OA link that beats a paywalled DOI.
+//   3. Europe PMC 404s? Ask NCBI E-utilities for the same PMCID. Europe PMC
+//      serves only its open-access subset, while NCBI also serves author
+//      manuscripts — for Nature Protocols that's the difference between 35
+//      articles and ~1,050, and measured over 25 PMC-deposited protocols the
+//      Europe PMC endpoint returned a body for 0 and NCBI for 20.
+//   4. Still nothing? Ask Unpaywall for an open-access copy — it often points
+//      back at a PMC record we can still render, or at least a direct OA link
+//      that beats a paywalled DOI.
+//   5. No open text at all? Return the abstract, which Europe PMC hands us in
+//      step 1 for essentially every indexed article. A paywalled protocol still
+//      yields its aim, principle and timing — far more use than a bare link.
 // Every path ends with a machine-readable `_status: …_` footer so the agent can
 // branch on the outcome without parsing prose.
+//
+// Nothing here works around an access control: NCBI itself withholds the body
+// for articles whose publisher opted out of XML download, and we report that
+// case as an abstract rather than reaching for the publisher's HTML.
 
 import { type ProviderOptions, fetchWithRetry, stripTags } from "./providers/types.ts";
 import { extractOaContent } from "./extract.ts";
 
 const SEARCH_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 const FULLTEXT_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest";
+const EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const UNPAYWALL_BASE = "https://api.unpaywall.org/v2";
+// NCBI asks every client to identify itself; `tool` must be stable and
+// space-free. Their guidelines allow 3 requests/second, or 10 with an API key —
+// `fetch` makes one call per user request, so neither is close to binding.
+const NCBI_TOOL = "labee-protocol-searcher";
 const DEFAULT_TIMEOUT_MS = 12000;
 const MAX_CHARS = 20000; // keep the tool result model-friendly
 
@@ -42,6 +59,9 @@ interface EpmcResult {
   pmcid?: string;
   doi?: string;
   title?: string;
+  /** Present on `resultType=core` for essentially every indexed article. */
+  abstractText?: string;
+  meshHeadingList?: { meshHeading?: { descriptorName?: string }[] };
 }
 interface EpmcSearchResponse {
   resultList?: { result?: EpmcResult[] };
@@ -253,6 +273,19 @@ interface UnpaywallHit {
 }
 
 /**
+ * The PMCID in an Unpaywall location URL. Unpaywall writes PMC links both ways —
+ * `/pmc/articles/PMC3868217` and, for older records, `/pmc/articles/3004291` —
+ * and missing the bare form sends us scraping the PMC website (which answers
+ * with a bot challenge) instead of asking an API for the same article.
+ */
+export function pmcidFromUrl(url: string): string | undefined {
+  const prefixed = /(PMC\d+)/i.exec(url);
+  if (prefixed) return prefixed[1]!.toUpperCase();
+  const bare = /\/pmc\/articles\/(\d+)/i.exec(url);
+  return bare ? `PMC${bare[1]}` : undefined;
+}
+
+/**
  * Ask Unpaywall for an open-access copy of a DOI. Prefers a location we can
  * still render (one bearing a PMCID → re-resolvable to fullTextXML); otherwise
  * returns the best direct OA link. Never throws — a miss just returns null.
@@ -275,8 +308,8 @@ async function tryUnpaywall(
       (l): l is OaLocation => Boolean(l),
     );
     for (const loc of locs) {
-      const pmc = /(PMC\d+)/i.exec(`${loc.url ?? ""} ${loc.url_for_pdf ?? ""}`);
-      if (pmc) return { pmcid: pmc[1]!.toUpperCase(), license: loc.license, version: loc.version };
+      const pmcid = pmcidFromUrl(`${loc.url ?? ""} ${loc.url_for_pdf ?? ""}`);
+      if (pmcid) return { pmcid, license: loc.license, version: loc.version };
     }
     const best = json.best_oa_location ?? locs[0];
     const link = best?.url_for_pdf ?? best?.url;
@@ -287,8 +320,14 @@ async function tryUnpaywall(
   }
 }
 
-/** GET a PMCID's JATS full text and render it, or return null if unavailable. */
-async function fetchPmcFulltext(
+/** A rendered full text plus the service that served it, for the source line. */
+interface PmcText {
+  markdown: string;
+  via: "Europe PMC" | "NCBI E-utilities";
+}
+
+/** GET a PMCID's JATS from Europe PMC and render it, or null if unavailable. */
+async function fetchEpmcFulltext(
   pmcid: string,
   doFetch: typeof fetch,
   timeoutMs: number,
@@ -301,6 +340,60 @@ async function fetchPmcFulltext(
   if (res.status !== 200) return null;
   const text = jatsToMarkdown(await res.text(), section, MAX_CHARS);
   return text || null;
+}
+
+/**
+ * The same PMCID from NCBI, which serves author manuscripts Europe PMC's
+ * open-access endpoint 404s on. When the publisher has opted out of XML
+ * download NCBI returns the record without a `<body>` (and says so in a
+ * comment) — that's a miss, not text, so require a body before rendering.
+ */
+async function fetchNcbiFulltext(
+  pmcid: string,
+  doFetch: typeof fetch,
+  timeoutMs: number,
+  section: string | undefined,
+): Promise<string | null> {
+  const key = process.env.NCBI_API_KEY ? `&api_key=${process.env.NCBI_API_KEY}` : "";
+  const url =
+    `${EUTILS_BASE}/efetch.fcgi?db=pmc&retmode=xml&id=${encodeURIComponent(pmcid.replace(/^PMC/i, ""))}` +
+    `&tool=${NCBI_TOOL}&email=${encodeURIComponent(contactEmail())}${key}`;
+  const res = await fetchWithRetry(doFetch, url, { headers: { Accept: "application/xml" } }, timeoutMs);
+  if (res.status !== 200) return null;
+  const xml = await res.text();
+  if (!/<body[\s>]/i.test(xml)) return null;
+  const text = jatsToMarkdown(xml, section, MAX_CHARS);
+  return text || null;
+}
+
+/** Europe PMC first (it's the OA-licensed copy), then NCBI for manuscripts. */
+async function fetchPmcFulltext(
+  pmcid: string,
+  doFetch: typeof fetch,
+  timeoutMs: number,
+  section: string | undefined,
+): Promise<PmcText | null> {
+  const epmc = await fetchEpmcFulltext(pmcid, doFetch, timeoutMs, section);
+  if (epmc) return { markdown: epmc, via: "Europe PMC" };
+  const ncbi = await fetchNcbiFulltext(pmcid, doFetch, timeoutMs, section);
+  if (ncbi) return { markdown: ncbi, via: "NCBI E-utilities" };
+  return null;
+}
+
+/**
+ * The abstract Europe PMC already returned in step 1, as a last resort before a
+ * bare link. Costs no extra request — `resultType=core` carries it — and for a
+ * paywalled protocol it still states the aim, principle and typical timing.
+ */
+function abstractBlock(result: EpmcResult): string | null {
+  const abstract = stripTags(result.abstractText ?? "").trim();
+  if (abstract.length < 100) return null; // a stub abstract isn't worth a tier
+  const mesh = (result.meshHeadingList?.meshHeading ?? [])
+    .map((m) => m.descriptorName)
+    .filter((d): d is string => Boolean(d));
+  const meshLine = mesh.length > 0 ? `\n\n_MeSH: ${mesh.slice(0, 12).join(" · ")}._` : "";
+  const body = abstract.length > MAX_CHARS ? `${abstract.slice(0, MAX_CHARS)}…` : abstract;
+  return `## Abstract\n\n${body}${meshLine}`;
 }
 
 /** DOI for an id: from the resolved record, or the id itself if DOI-shaped. */
@@ -326,10 +419,12 @@ export async function getProtocolFulltext(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const section = opts.section;
 
-  // --- Step 1: resolve to a Europe PMC record (→ PMCID / DOI). ---
+  // --- Step 1: resolve to a Europe PMC record (→ PMCID / DOI / abstract). ---
+  // `core` rather than `lite`: same single request, but it carries the abstract
+  // and MeSH terms that the last tier falls back on.
   const url =
     `${SEARCH_BASE}?query=${encodeURIComponent(resolveQuery(trimmed))}` +
-    `&format=json&pageSize=1&resultType=lite`;
+    `&format=json&pageSize=1&resultType=core`;
   const sres = await fetchWithRetry(doFetch, url, { headers: { Accept: "application/json" } }, timeoutMs);
   if (sres.status !== 200) throw new Error(`Europe PMC HTTP ${sres.status}`);
   const result = ((await sres.json()) as EpmcSearchResponse).resultList?.result?.[0];
@@ -344,26 +439,26 @@ export async function getProtocolFulltext(
   const heading = `# ${title || trimmed}`;
   const doi = doiFor(result, trimmed);
 
-  // --- Step 2: Europe PMC open-access full text, if a PMCID is present. ---
+  // --- Step 2: PMC full text — Europe PMC's OA subset, then NCBI. ---
   if (result.pmcid) {
-    const text = await fetchPmcFulltext(result.pmcid, doFetch, timeoutMs, section);
-    if (text) {
+    const hit = await fetchPmcFulltext(result.pmcid, doFetch, timeoutMs, section);
+    if (hit) {
       return withStatus(
-        `${heading}\n\n_Source: Europe PMC open-access full text (${result.pmcid})._\n\n${text}`,
+        `${heading}\n\n_Source: ${hit.via} full text (${result.pmcid})._\n\n${hit.markdown}`,
         "ok",
       );
     }
-    // XML endpoint failed — fall through to Unpaywall before giving up.
+    // Both PMC endpoints declined — fall through before giving up.
   }
 
   // --- Step 3: Unpaywall — recover a PMC copy, else a direct OA link. ---
   const oa = await tryUnpaywall(doi, doFetch, timeoutMs);
   if (oa?.pmcid) {
-    const text = await fetchPmcFulltext(oa.pmcid, doFetch, timeoutMs, section);
-    if (text) {
+    const hit = await fetchPmcFulltext(oa.pmcid, doFetch, timeoutMs, section);
+    if (hit) {
       const lic = oa.license ? ` · ${oa.license}` : "";
       return withStatus(
-        `${heading}\n\n_Source: Unpaywall → Europe PMC open-access full text (${oa.pmcid}${lic})._\n\n${text}`,
+        `${heading}\n\n_Source: Unpaywall → ${hit.via} full text (${oa.pmcid}${lic})._\n\n${hit.markdown}`,
         "ok",
       );
     }
@@ -388,10 +483,24 @@ export async function getProtocolFulltext(
     );
   }
 
-  // --- No open text anywhere: return a citation link. ---
+  // --- Step 4: the abstract, which beats a bare link for a paywalled article. ---
+  const pmcNote = result.pmcid
+    ? `\n\nA PMC copy exists and is free to read in a browser, though its full text isn't served ` +
+      `for download: https://www.ncbi.nlm.nih.gov/pmc/articles/${result.pmcid}/`
+    : "";
+  const abstract = abstractBlock(result);
+  if (abstract) {
+    return withStatus(
+      `${heading}\n\n_Source: Europe PMC abstract — no open-access full text for this article._\n\n` +
+        `${abstract}${pmcNote}\n\nRead the full protocol at: ${articleUrl(result, trimmed)}`,
+      "abstract-only",
+    );
+  }
+
+  // --- No open text and no abstract: return a citation link. ---
   return withStatus(
-    `${heading}\n\nNo open-access full text is available for this article via Europe PMC or Unpaywall.\n\n` +
-      `Read it at: ${articleUrl(result, trimmed)}`,
+    `${heading}\n\nNo open-access full text is available for this article via Europe PMC, NCBI or Unpaywall.` +
+      `${pmcNote}\n\nRead it at: ${articleUrl(result, trimmed)}`,
     "no-open-fulltext",
   );
 }
