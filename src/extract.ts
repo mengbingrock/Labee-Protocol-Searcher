@@ -324,8 +324,25 @@ export async function extractOaContent(
     }
 
     const text = htmlToText(raw);
-    return text ? { text: cap(text, maxChars), format: "html" } : null;
+    if (!text || looksLikeBotWall(text)) return null;
+    return { text: cap(text, maxChars), format: "html" };
   } catch {
     return null;
   }
+}
+
+// Phrases that only ever appear on a challenge/interstitial page, never in an
+// article. Kept narrow on purpose: a false positive silently hides real content.
+const BOT_WALL_RE =
+  /checking your browser before accessing|just a moment\.\.\.|enable javascript and cookies to continue|verifying you are (a )?human|request unsuccessful\.\s*incapsula|attention required!\s*\|\s*cloudflare|not automatically redirected after \d+ seconds|please (enable|turn on) (javascript|cookies) to (continue|proceed)/i;
+
+/**
+ * True when extraction produced a bot challenge rather than an article. Returning
+ * one as content is worse than returning nothing: the caller records `ok`, the
+ * agent reads "Checking your browser…" as the protocol, and the health table
+ * counts a success. Short *and* matching — a real article that merely quotes one
+ * of these phrases will run past the length bound.
+ */
+export function looksLikeBotWall(text: string): boolean {
+  return text.length < 1500 && BOT_WALL_RE.test(text);
 }

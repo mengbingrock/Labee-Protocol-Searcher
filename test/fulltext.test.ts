@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getProtocolFulltext } from "../src/fulltext.ts";
+import { getProtocolFulltext, pmcidFromUrl } from "../src/fulltext.ts";
 
 const searchHit = (extra: Record<string, unknown>) =>
   JSON.stringify({ resultList: { result: [{ id: "123", source: "MED", title: "My Protocol", ...extra }] } });
@@ -96,6 +96,119 @@ describe("getProtocolFulltext — section-aware rendering", () => {
   });
 });
 
+// Europe PMC serves only its open-access subset and 404s on author manuscripts;
+// NCBI serves those. Without this tier a PMC-deposited protocol in a paywalled
+// journal reads as "no full text" even though the deposited text is right there.
+describe("getProtocolFulltext — NCBI fallback for PMC author manuscripts", () => {
+  /** Europe PMC 404s the PMCID; NCBI's efetch answers with the JATS. */
+  function ncbiRouter(ncbiXml: string, search = searchHit({ pmcid: "PMC3868217", doi: "10.1/nprot" })) {
+    const calls: string[] = [];
+    const impl = (async (url: string) => {
+      calls.push(url);
+      if (url.includes("/search")) return new Response(search, { status: 200 });
+      if (url.includes("fullTextXML")) return new Response("not found", { status: 404 });
+      if (url.includes("efetch.fcgi")) return new Response(ncbiXml, { status: 200 });
+      return new Response(JSON.stringify({ is_oa: false }), { status: 200 });
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("renders the manuscript NCBI serves when Europe PMC has no open copy", async () => {
+    const { impl } = ncbiRouter(FULLTEXT_XML);
+    const out = await getProtocolFulltext("10.1/nprot", { fetchImpl: impl });
+    expect(out).toContain("Step 1: mix the reagents.");
+    expect(out).toContain("NCBI E-utilities");
+    expect(out).toContain("PMC3868217");
+    expect(out).toContain("_status: ok_");
+  });
+
+  it("identifies the client to NCBI and strips the PMC prefix from the id", async () => {
+    const { impl, calls } = ncbiRouter(FULLTEXT_XML);
+    await getProtocolFulltext("10.1/nprot", { fetchImpl: impl });
+    const efetch = calls.find((u) => u.includes("efetch.fcgi"))!;
+    expect(efetch).toContain("db=pmc");
+    expect(efetch).toContain("id=3868217"); // NCBI wants the bare number
+    expect(efetch).toContain("tool=labee-protocol-searcher");
+    expect(efetch).toMatch(/email=/);
+  });
+
+  it("tries Europe PMC first, so an OA article never costs an NCBI request", async () => {
+    const calls: string[] = [];
+    const impl = (async (url: string) => {
+      calls.push(url);
+      if (url.includes("/search")) return new Response(searchHit({ pmcid: "PMC1" }), { status: 200 });
+      return new Response(FULLTEXT_XML, { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await getProtocolFulltext("PMC1", { fetchImpl: impl });
+    expect(out).toContain("Europe PMC");
+    expect(calls.some((u) => u.includes("efetch.fcgi"))).toBe(false);
+  });
+
+  it("treats a publisher opt-out (no <body>) as a miss, not as text", async () => {
+    // What NCBI actually returns for those: metadata plus a comment saying the
+    // publisher doesn't allow XML download. Rendering it would emit noise.
+    const optOut =
+      "<article><front><article-meta><article-id>3004291</article-id></article-meta></front>" +
+      "<!--The publisher of this article does not allow downloading of the full text in XML form.--></article>";
+    const { impl } = ncbiRouter(optOut, searchHit({ pmcid: "PMC3004291", doi: "10.1/closed", abstractText: "A".repeat(150) }));
+    const out = await getProtocolFulltext("10.1/closed", { fetchImpl: impl });
+    expect(out).not.toContain("3004291</article-id>");
+    expect(out).toContain("_status: abstract-only_");
+    // The deposit is still readable in a browser — say where.
+    expect(out).toContain("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3004291/");
+  });
+});
+
+// Every Europe PMC record carries an abstract, and step 1 already paid for it.
+describe("getProtocolFulltext — abstract fallback", () => {
+  const paywalled = (extra: Record<string, unknown> = {}) =>
+    searchHit({
+      doi: "10.1038/nprot.2008.133",
+      abstractText:
+        "Touchdown PCR offers a simple and rapid means to optimize PCRs, increasing specificity, " +
+        "sensitivity and yield, without the need for lengthy optimizations.",
+      meshHeadingList: { meshHeading: [{ descriptorName: "DNA Primers" }, { descriptorName: "Temperature" }] },
+      ...extra,
+    });
+
+  it("returns the abstract and MeSH terms instead of a bare link", async () => {
+    const f = router(paywalled());
+    const out = await getProtocolFulltext("10.1038/nprot.2008.133", { fetchImpl: f });
+    expect(out).toContain("## Abstract");
+    expect(out).toContain("Touchdown PCR offers a simple and rapid means");
+    expect(out).toContain("MeSH: DNA Primers · Temperature");
+    expect(out).toContain("https://doi.org/10.1038/nprot.2008.133");
+    expect(out).toContain("_status: abstract-only_");
+  });
+
+  it("stays `no-open-fulltext` when there is no abstract either", async () => {
+    const f = router(searchHit({ doi: "10.1/bare" }));
+    const out = await getProtocolFulltext("10.1/bare", { fetchImpl: f });
+    expect(out).toContain("_status: no-open-fulltext_");
+    expect(out).not.toContain("## Abstract");
+  });
+
+  it("ignores a stub abstract rather than passing off a fragment as content", async () => {
+    const f = router(searchHit({ doi: "10.1/stub", abstractText: "No abstract available." }));
+    expect(await getProtocolFulltext("10.1/stub", { fetchImpl: f })).toContain("_status: no-open-fulltext_");
+  });
+
+  it("never displaces real full text", async () => {
+    const f = router(paywalled({ pmcid: "PMC1" }));
+    const out = await getProtocolFulltext("10.1038/nprot.2008.133", { fetchImpl: f });
+    expect(out).toContain("_status: ok_");
+    expect(out).toContain("Step 1: mix the reagents.");
+    expect(out).not.toContain("## Abstract");
+  });
+
+  it("strips markup out of the abstract", async () => {
+    const f = router(searchHit({ doi: "10.1/tags", abstractText: `<p>Structured <b>abstract</b> text. ${"x".repeat(120)}</p>` }));
+    const out = await getProtocolFulltext("10.1/tags", { fetchImpl: f });
+    expect(out).toContain("Structured abstract text.");
+    expect(out).not.toContain("<b>");
+  });
+});
+
 describe("getProtocolFulltext — Unpaywall fallback", () => {
   it("recovers a PMC copy via Unpaywall when Europe PMC has no PMCID", async () => {
     const f = (async (url: string) => {
@@ -152,5 +265,50 @@ describe("getProtocolFulltext — Unpaywall fallback", () => {
     const out = await getProtocolFulltext("10.5/pdf", { fetchImpl: f });
     expect(out).toContain("https://oa.example/x.pdf");
     expect(out).toContain("_status: oa-link_");
+  });
+});
+
+// Unpaywall writes PMC links both ways. Missing the bare form sent `fetch` to
+// scrape the PMC website, which answers with a bot challenge — measured on
+// 10.1038/nprot.2006.98, which was published as `ok` with the wall as its text.
+describe("pmcidFromUrl", () => {
+  it("reads the prefixed form", () => {
+    expect(pmcidFromUrl("https://europepmc.org/articles/PMC555")).toBe("PMC555");
+    expect(pmcidFromUrl("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6058056/pdf/")).toBe("PMC6058056");
+  });
+
+  it("reads the bare form older records use", () => {
+    expect(pmcidFromUrl("https://www.ncbi.nlm.nih.gov/pmc/articles/3004291")).toBe("PMC3004291");
+  });
+
+  it("is undefined for a non-PMC location", () => {
+    expect(pmcidFromUrl("https://research.wur.nl/en/publications/chip-of-plant-tfs")).toBeUndefined();
+  });
+});
+
+describe("getProtocolFulltext — a bare-numbered PMC location", () => {
+  it("routes to the PMC API instead of scraping the PMC website", async () => {
+    const calls: string[] = [];
+    const f = (async (url: string) => {
+      calls.push(url);
+      if (url.includes("/search")) return new Response(searchHit({ doi: "10.1/bare-pmc" }), { status: 200 });
+      if (url.includes("api.unpaywall.org")) {
+        return new Response(
+          JSON.stringify({ is_oa: true, best_oa_location: { url: "https://www.ncbi.nlm.nih.gov/pmc/articles/3004291" } }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("fullTextXML")) return new Response("nope", { status: 404 });
+      if (url.includes("efetch.fcgi")) return new Response(FULLTEXT_XML, { status: 200 });
+      return new Response("<html><body>Checking your browser before accessing</body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+    const out = await getProtocolFulltext("10.1/bare-pmc", { fetchImpl: f });
+    expect(out).toContain("Step 1: mix the reagents.");
+    expect(out).toContain("PMC3004291");
+    expect(calls.some((u) => u.includes("efetch.fcgi"))).toBe(true);
+    expect(out).not.toContain("Checking your browser");
   });
 });

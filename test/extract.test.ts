@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractOaContent } from "../src/extract.ts";
+import { extractOaContent, looksLikeBotWall } from "../src/extract.ts";
 
 function resp(body: string, contentType: string, status = 200): typeof fetch {
   return (async () =>
@@ -261,5 +261,37 @@ describe("extractOaContent — multi-hop cookie chain", () => {
       return new Response("", { status: 302, headers: { location: `/x?n=${n + 1}` } });
     }) as unknown as typeof fetch;
     expect(await extractOaContent("https://endless.example/x?n=0", { fetchImpl }, 20000)).toBeNull();
+  });
+});
+
+// A challenge page extracts as clean, plausible text, so without this guard the
+// caller stamps `ok` on "Checking your browser…" and the health table counts it
+// as a working source. Measured live: PMC's article pages answer this way.
+describe("looksLikeBotWall", () => {
+  it("recognises the common challenge interstitials", () => {
+    expect(looksLikeBotWall("Checking your browser before accessing pmc.ncbi.nlm.nih.gov")).toBe(true);
+    expect(looksLikeBotWall("Just a moment...")).toBe(true);
+    expect(looksLikeBotWall("Click here if you are not automatically redirected after 5 seconds.")).toBe(true);
+    expect(looksLikeBotWall("Verifying you are human. This may take a few seconds.")).toBe(true);
+  });
+
+  it("leaves real article text alone", () => {
+    expect(looksLikeBotWall("Add 5 uL of enzyme and incubate at 37 C for 30 min.")).toBe(false);
+  });
+
+  it("does not fire on a long article that merely quotes the phrase", () => {
+    // Length is the tiebreak: an article discussing bot walls must survive.
+    const article = `Automated clients often see "just a moment..." pages. ${"Protocol text. ".repeat(120)}`;
+    expect(article.length).toBeGreaterThan(1500);
+    expect(looksLikeBotWall(article)).toBe(false);
+  });
+
+  it("returns null from extraction rather than handing the wall back as content", async () => {
+    const wall = resp(
+      "<html><body><h1>Checking your browser before accessing pmc.ncbi.nlm.nih.gov</h1>" +
+        "<p>Click here if you are not automatically redirected after 5 seconds.</p></body></html>",
+      "text/html",
+    );
+    expect(await extractOaContent("https://www.ncbi.nlm.nih.gov/pmc/articles/3004291", { fetchImpl: wall }, 20000)).toBeNull();
   });
 });
