@@ -98,9 +98,9 @@ broke overnight from one that has been down for a fortnight, and only the second
 is a reason to re-route a chain.
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-04T07:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-05T07:50Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
-❌ **1 backend not answering:** `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
+❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
 ⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `sigma-aldrich` (graded `none` but the page extracted fine).
 
@@ -111,7 +111,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `crossref` | journal | ✅ 3 results |
 | `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
-| `semanticscholar` | journal | ✅ 3 results |
+| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
@@ -122,10 +122,10 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | Source | Declared `fetch` | Search hits | Top result `fetch` |
 | --- | --- | --- | --- |
 | `star-protocols` | ✅ full | ✅ 3 | ✅ `ok` · Europe PMC |
-| `nature-protocols` | ⚠️ partial | ✅ 3 | ⚠️ `no-open-fulltext` · Unpaywall |
-| `jove` | ⚠️ partial | ✅ 2 | ✅ `ok` · Unpaywall |
+| `nature-protocols` | ⚠️ partial | ✅ 3 | ⚠️ `abstract-only` · Europe PMC abstract |
+| `jove` | ⚠️ partial | ✅ 2 | ✅ `ok` · NCBI author manuscript |
 | `bio-protocol` | ✅ full | ✅ 3 | ✅ `ok` · Europe PMC |
-| `current-protocols` | ✅ full | ✅ 3 | ⚠️ `no-open-fulltext` · Unpaywall |
+| `current-protocols` | ✅ full | ✅ 3 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
 | `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
 | `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
@@ -138,12 +138,13 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
-_A `partial` source showing `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
+_A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
 **Daily history**
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-05 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
 | 2026-07-30 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
