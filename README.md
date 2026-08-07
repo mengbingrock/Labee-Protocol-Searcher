@@ -98,9 +98,9 @@ broke overnight from one that has been down for a fortnight, and only the second
 is a reason to re-route a chain.
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-06T07:50Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-07T06:20Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
-❌ **1 backend not answering:** `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
+❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
 ⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `sigma-aldrich` (graded `none` but the page extracted fine).
 
@@ -111,7 +111,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `crossref` | journal | ✅ 3 results |
 | `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
-| `semanticscholar` | journal | ✅ 3 results |
+| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
@@ -144,6 +144,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-07 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
 | 2026-08-06 | ⚠️ 6/7 | ✅ 16/16 | ⚠️ 12/16 | `duckduckgo` | `sigma-aldrich` |
 | 2026-08-05 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
 | 2026-07-30 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
