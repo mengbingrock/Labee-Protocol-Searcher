@@ -4,3 +4,4 @@
 {"date":"2026-08-07","at":"2026-08-07T06:20Z","backendsUp":5,"backendsConfigured":7,"backendsUnconfigured":1,"down":["semanticscholar","duckduckgo"],"sourcesWithHits":16,"sourcesProbed":16,"fetchOk":12,"drift":["sigma-aldrich"],"sweepFailed":false}
 {"date":"2026-08-08","at":"2026-08-08T05:58Z","backendsUp":6,"backendsConfigured":7,"backendsUnconfigured":1,"down":["duckduckgo"],"sourcesWithHits":16,"sourcesProbed":16,"fetchOk":12,"drift":["sigma-aldrich"],"sweepFailed":false}
 {"date":"2026-08-09","at":"2026-08-09T05:59Z","backendsUp":5,"backendsConfigured":7,"backendsUnconfigured":1,"down":["semanticscholar","duckduckgo"],"sourcesWithHits":16,"sourcesProbed":16,"fetchOk":12,"drift":["sigma-aldrich"],"sweepFailed":false}
+{"date":"2026-08-10","at":"2026-08-10T06:43Z","backendsUp":5,"backendsConfigured":7,"backendsUnconfigured":1,"down":["semanticscholar","duckduckgo"],"sourcesWithHits":16,"sourcesProbed":16,"fetchOk":12,"drift":["sigma-aldrich"],"sweepFailed":false}
