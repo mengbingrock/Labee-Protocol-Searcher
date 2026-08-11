@@ -46,6 +46,7 @@ describe("searchProtocols", () => {
   });
 
   it("routes journal sources to the scholarly API, not web search", async () => {
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
     const fakeFetch = (async (url: string) => {
       // A journal query must hit Crossref, never DuckDuckGo.
       expect(url).toContain("crossref");
@@ -146,6 +147,61 @@ describe("result fetchability", () => {
     const out = await search("x", { sources: ["star-protocols"], providerOpts: { fetchImpl: f } });
     expect(out.results[0]!.id).toMatch(/^url:/);
     expect(out.results[0]!.fetchable).toBe("none");
+  });
+
+  it("lets a fresh per-DOI CI observation override a partial journal prior", async () => {
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
+    const body = JSON.stringify({
+      message: {
+        items: [
+          {
+            title: ["Verified Nature protocol"],
+            URL: "https://doi.org/10.1038/nprot.2011.388",
+          },
+        ],
+      },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await search("x", {
+      sources: ["nature-protocols"],
+      providerOpts: { fetchImpl: f },
+      fetchabilityIndex: {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        dois: {
+          "10.1038/nprot.2011.388": {
+            status: "ok",
+            checkedAt: new Date().toISOString(),
+            retrievalTier: "NCBI author manuscript",
+          },
+        },
+      },
+    });
+    expect(out.results[0]).toMatchObject({
+      fetchable: "full",
+      availability: {
+        availability: "verified-full-text",
+        confidence: "verified",
+        journalPrior: "partial",
+      },
+    });
+    expect(renderSearch(out)).toContain("verified-full-text (CI");
+  });
+
+  it("labels an untested DOI explicitly as a journal prior", async () => {
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
+    const body = JSON.stringify({
+      message: {
+        items: [{ title: ["Untested"], URL: "https://doi.org/10.1038/nprot.2099.1" }],
+      },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await search("x", {
+      sources: ["nature-protocols"],
+      providerOpts: { fetchImpl: f },
+      fetchabilityIndex: { schemaVersion: 1, generatedAt: new Date().toISOString(), dois: {} },
+    });
+    expect(renderSearch(out)).toContain("may-not-fetch (journal prior; DOI untested)");
   });
 
   it("renders the three grades distinguishably", () => {

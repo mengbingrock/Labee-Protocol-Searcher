@@ -28,14 +28,32 @@ export function providerStatus(): { id: string; available: boolean }[] {
 
 export interface WebSearchOutcome {
   results: RawResult[];
-  /** Id of the provider that produced the results, or the last one tried. */
+  /** Ids of providers that produced results, joined in priority order. */
   provider: string;
+  providers: WebProviderOutcome[];
   error?: string;
 }
 
+export interface WebProviderOutcome {
+  id: string;
+  status: "ok" | "empty" | "error" | "unavailable";
+  count: number;
+  elapsedMs: number;
+  error?: string;
+}
+
+function resultKey(result: RawResult): string {
+  try {
+    const url = new URL(result.url);
+    return `${url.hostname.toLowerCase().replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "").toLowerCase()}`;
+  } catch {
+    return `${result.title.toLowerCase()}|${result.url.toLowerCase()}`;
+  }
+}
+
 /**
- * Run `query` through the active providers in order, returning the first
- * non-empty result set. Falls through on rate-limits / empty responses.
+ * Run `query` through every active provider, merging unique results and
+ * retaining per-backend coverage. Explicit provider pinning still limits the set.
  */
 export async function webSearch(
   query: string,
@@ -43,13 +61,42 @@ export async function webSearch(
   opts?: ProviderOptions,
 ): Promise<WebSearchOutcome> {
   const providers = activeProviders();
-  let lastError = "no search provider available";
-  let lastProvider = "none";
-  for (const provider of providers) {
-    lastProvider = provider.id;
-    const res = await provider.run(query, limit, opts);
-    if (res.results.length > 0) return { results: res.results, provider: provider.id };
-    lastError = res.error ?? "no results";
+  const attempts: WebProviderOutcome[] = [];
+  const errors: string[] = [];
+  const merged = new Map<string, RawResult>();
+  const pin = process.env.PROTOCOLS_SEARCH_PROVIDER?.trim().toLowerCase();
+  if (!pin) {
+    for (const provider of ALL) {
+      if (!provider.available()) attempts.push({ id: provider.id, status: "unavailable", count: 0, elapsedMs: 0 });
+    }
   }
-  return { results: [], provider: lastProvider, error: lastError };
+  for (const provider of providers) {
+    const started = Date.now();
+    try {
+      const res = await provider.run(query, limit, opts);
+      const status = res.results.length > 0 ? "ok" : res.error ? "error" : "empty";
+      attempts.push({
+        id: provider.id, status, count: res.results.length, elapsedMs: Date.now() - started,
+        ...(res.error ? { error: res.error } : {}),
+      });
+      if (res.results.length === 0) errors.push(`${provider.id}: ${res.error ?? "no results"}`);
+      for (const result of res.results) {
+        const key = resultKey(result);
+        const current = merged.get(key);
+        if (!current) merged.set(key, result);
+        else if (!current.snippet && result.snippet) merged.set(key, { ...current, snippet: result.snippet });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "failed";
+      errors.push(`${provider.id}: ${message}`);
+      attempts.push({ id: provider.id, status: "error", count: 0, elapsedMs: Date.now() - started, error: message });
+    }
+  }
+  const successful = attempts.filter((attempt) => attempt.status === "ok").map((attempt) => attempt.id);
+  return {
+    results: [...merged.values()],
+    provider: successful.join("+") || providers.at(-1)?.id || "none",
+    providers: attempts,
+    ...(errors.length > 0 ? { error: errors.join("; ") } : {}),
+  };
 }

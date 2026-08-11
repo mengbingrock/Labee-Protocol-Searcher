@@ -20,6 +20,7 @@ import { runHttpServer } from "./http.ts";
 import { search, renderSearch } from "./search.ts";
 import { fetchResource } from "./fetch.ts";
 import { VENDORS } from "./vendors.ts";
+import { deepSearchService } from "./agent/service.ts";
 
 interface CliArgs {
   query?: string;
@@ -116,16 +117,25 @@ async function runCli(args: CliArgs): Promise<void> {
 
 const args = parseArgs(process.argv.slice(2));
 
+async function resumeAgentJobs(): Promise<void> {
+  try {
+    const ids = await deepSearchService().resumeIncompleteJobs();
+    if (ids.length > 0) process.stderr.write(`[labee-protocol-searcher] resumed ${ids.length} deep-search job(s)\n`);
+  } catch (err) {
+    process.stderr.write(`[labee-protocol-searcher] could not resume deep-search jobs: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
 if (args.query !== undefined || args.fetchId !== undefined || args.listSources) {
   runCli(args).catch((err) => {
     process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   });
 } else if (args.http) {
-  runHttp(args).catch((err) => {
+  resumeAgentJobs().then(() => runHttp(args)).catch((err) => {
     process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   });
 } else {
-  runMcpServer().then(() => process.exit(0));
+  resumeAgentJobs().then(() => runMcpServer()).then(() => process.exit(0));
 }

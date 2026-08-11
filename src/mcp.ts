@@ -12,6 +12,8 @@ import { fetchResource, fetchResources } from "./fetch.ts";
 import { VENDORS, VENDOR_IDS, type Fetchability } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
 import { journalProviderOrder } from "./journals.ts";
+import { deepSearchService } from "./agent/service.ts";
+import type { DeepSearchInput } from "./agent/types.ts";
 
 /** Every searchable source id: the vendors/journals plus the REBASE database. */
 const SOURCE_IDS = [...VENDOR_IDS, "rebase"] as const;
@@ -64,7 +66,8 @@ export const TOOLS = [
       "Millipore, Takara Bio, Promega, IDT) via web search; and restriction enzymes via REBASE (NEB's " +
       "open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a " +
       "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — " +
-      "`fetchable`, `may-not-fetch`, or `links-only`. Call `fetch` with a result's id to read its " +
+      "fresh exact DOI observations from the daily CI index win, current OA metadata is next, and " +
+      "the source grade is the fallback prior. Call `fetch` with a result's id to read its " +
       "content; vendor pages included. Don't spend a `fetch` on a `links-only` result — the site " +
       "refuses automated requests and you already have its url.",
     inputSchema: {
@@ -128,6 +131,55 @@ export const TOOLS = [
             "'Methods', 'Protocol') to return just that section instead of the whole article.",
         },
       },
+    },
+  },
+  {
+    name: "deep_search_start",
+    title: "Start a durable exhaustive research job",
+    annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
+    description:
+      "Start a durable deep-search job. It searches exactly five distinct keyword variants, runs every " +
+      "configured scholarly backend and every available web backend, native-fetches every returned result, " +
+      "then tries deterministic OA and optional local-CDP browser recovery. Returns a job id immediately.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        keywords: { type: "array", minItems: 5, maxItems: 5, items: { type: "string" } },
+        sources: { type: "array", items: { type: "string", enum: SOURCE_IDS } },
+        limit: { type: "number", minimum: 1, maximum: 10 },
+        maxRounds: { type: "number", minimum: 1, maximum: 15 },
+        maxSeconds: { type: "number", minimum: 30, maximum: 1800 },
+        maxBrowserPages: { type: "number", minimum: 0, maximum: 20 },
+        maxBrowserSearchPages: { type: "number", minimum: 0, maximum: 50 },
+        browser: { type: "string", enum: ["auto", "off", "cdp"] },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "deep_search_get",
+    title: "Get deep-search status and results",
+    annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    description: "Read a durable deep-search job. Content bodies are omitted by default to keep the response bounded.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        includeContent: { type: "boolean" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "deep_search_cancel",
+    title: "Cancel a deep-search job",
+    annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: true },
+    description: "Request cooperative cancellation of a queued or running deep-search job.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
     },
   },
   {
@@ -202,6 +254,46 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     if (list.length === 1) return toolText(await fetchResource(list[0]!, opts));
     const rows = await fetchResources(list, opts);
     return toolText(rows.map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+  }
+  if (name === "deep_search_start") {
+    const query = typeof args.query === "string" ? args.query : "";
+    if (!query.trim()) return toolText("Error: `query` is required.", true);
+    const keywords = Array.isArray(args.keywords)
+      ? args.keywords.filter((x): x is string => typeof x === "string")
+      : undefined;
+    const sources = Array.isArray(args.sources)
+      ? args.sources.filter((x): x is string => typeof x === "string")
+      : undefined;
+    const browser = ["auto", "off", "cdp"].includes(String(args.browser))
+      ? (args.browser as DeepSearchInput["browser"])
+      : undefined;
+    const input: DeepSearchInput = {
+      query,
+      ...(keywords ? { keywords } : {}),
+      ...(sources ? { sources } : {}),
+      ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
+      ...(typeof args.maxRounds === "number" ? { maxRounds: args.maxRounds } : {}),
+      ...(typeof args.maxSeconds === "number" ? { maxSeconds: args.maxSeconds } : {}),
+      ...(typeof args.maxBrowserPages === "number" ? { maxBrowserPages: args.maxBrowserPages } : {}),
+      ...(typeof args.maxBrowserSearchPages === "number" ? { maxBrowserSearchPages: args.maxBrowserSearchPages } : {}),
+      ...(browser ? { browser } : {}),
+    };
+    const progress = await deepSearchService().start(input);
+    return toolText(JSON.stringify({ jobId: progress.id, status: progress.status }, null, 2));
+  }
+  if (name === "deep_search_get") {
+    const id = typeof args.id === "string" ? args.id : "";
+    if (!id) return toolText("Error: `id` is required.", true);
+    const snapshot = await deepSearchService().get(id);
+    if (args.includeContent !== true) {
+      snapshot.findings = snapshot.findings.map(({ content: _content, ...finding }) => finding);
+    }
+    return toolText(JSON.stringify(snapshot, null, 2));
+  }
+  if (name === "deep_search_cancel") {
+    const id = typeof args.id === "string" ? args.id : "";
+    if (!id) return toolText("Error: `id` is required.", true);
+    return toolText(JSON.stringify(await deepSearchService().cancel(id), null, 2));
   }
   return toolText(`Error: unknown tool "${name}".`, true);
 }

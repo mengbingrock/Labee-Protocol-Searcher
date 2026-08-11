@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendHistory,
+  buildFetchabilityIndex,
   driftOf,
   historyRows,
   parseHistory,
@@ -30,6 +31,55 @@ describe("statusOf", () => {
 
   it("reports a missing footer rather than guessing", () => {
     expect(statusOf("Error: `id` is required.")).toBe("no-status");
+  });
+});
+
+describe("buildFetchabilityIndex", () => {
+  it("merges exact DOI observations, normalizes keys, and keeps the newest result", () => {
+    const out = buildFetchabilityIndex(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-08-10T05:17:00Z",
+        dois: {
+          "10.1038/NPROT.2011.388": {
+            status: "abstract-only",
+            checkedAt: "2026-08-10T05:17:00Z",
+          },
+        },
+      },
+      [
+        {
+          doi: "doi:10.1038/nprot.2011.388",
+          status: "ok",
+          checkedAt: "2026-08-11T05:17:00Z",
+          retrievalTier: "NCBI author manuscript",
+          discoveredBy: ["crossref", "openalex", "crossref"],
+        },
+      ],
+      "2026-08-11T05:17:00Z",
+    );
+    expect(out.dois["10.1038/nprot.2011.388"]).toMatchObject({
+      status: "ok",
+      retrievalTier: "NCBI author manuscript",
+      discoveredBy: ["crossref", "openalex"],
+    });
+  });
+
+  it("expires old rows and bounds repository growth", () => {
+    const previous = {
+      schemaVersion: 1,
+      generatedAt: "2026-08-11T00:00:00Z",
+      dois: {
+          "10.1000/old": { status: "ok", checkedAt: "2025-01-01T00:00:00Z" },
+          "10.1000/a": { status: "ok", checkedAt: "2026-08-10T00:00:00Z" },
+          "10.1000/b": { status: "ok", checkedAt: "2026-08-09T00:00:00Z" },
+      },
+    };
+    const out = buildFetchabilityIndex(previous, [], "2026-08-11T00:00:00Z", {
+      retentionDays: 90,
+      maxEntries: 1,
+    });
+    expect(Object.keys(out.dois)).toEqual(["10.1000/a"]);
   });
 });
 

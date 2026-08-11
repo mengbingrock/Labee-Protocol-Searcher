@@ -22,7 +22,17 @@ const bodies = {
     },
   }),
   europepmc: JSON.stringify({
-    resultList: { result: [{ title: "EPMC protocol", doi: "10.1/epmc", abstractText: "x" }] },
+    resultList: {
+      result: [
+        {
+          title: "EPMC protocol",
+          doi: "10.1/epmc",
+          abstractText: "x",
+          pmcid: "PMC123",
+          isOpenAccess: "Y",
+        },
+      ],
+    },
   }),
   openalex: JSON.stringify({
     results: [
@@ -30,11 +40,21 @@ const bodies = {
         display_name: "OpenAlex protocol",
         doi: "https://doi.org/10.1/oa",
         abstract_inverted_index: { A: [0], reconstructed: [1], abstract: [2] },
+        open_access: { is_oa: true },
+        best_oa_location: { is_oa: true, pdf_url: "https://oa.example/paper.pdf" },
       },
     ],
   }),
   semanticscholar: JSON.stringify({
-    data: [{ title: "S2 protocol", externalIds: { DOI: "10.1/s2" }, url: "https://s2.org/x", abstract: "ab" }],
+    data: [
+      {
+        title: "S2 protocol",
+        externalIds: { DOI: "10.1/s2" },
+        url: "https://s2.org/x",
+        abstract: "ab",
+        openAccessPdf: { url: "https://oa.example/s2.pdf", status: "GREEN" },
+      },
+    ],
   }),
   esearch: JSON.stringify({ esearchresult: { idlist: ["35733605"] } }),
   esummary: JSON.stringify({
@@ -82,6 +102,7 @@ describe("searchJournal provider parsing", () => {
     expect(out.source).toBe("openalex");
     expect(out.results[0]).toMatchObject({ title: "OpenAlex protocol", url: "https://doi.org/10.1/oa" });
     expect(out.results[0]!.snippet).toBe("A reconstructed abstract");
+    expect(out.results[0]!.oaEvidence).toContain("openalex:open-access");
   });
 
   it("semanticscholar: maps DOI then url, scoped by venue", async () => {
@@ -93,7 +114,9 @@ describe("searchJournal provider parsing", () => {
     }) as unknown as typeof fetch;
     const out = await searchJournal(STAR, "x", 3, { fetchImpl: f });
     expect(seen).toContain("venue=STAR%20Protocols");
+    expect(seen).toContain("openAccessPdf");
     expect(out.results[0]!.url).toBe("https://doi.org/10.1/s2");
+    expect(out.results[0]!.oaEvidence?.[0]).toContain("semanticscholar:open-access-pdf:");
   });
 
   it("pubmed: esearch then esummary, builds DOI url", async () => {
@@ -107,17 +130,34 @@ describe("searchJournal provider parsing", () => {
 });
 
 describe("searchJournal chain", () => {
-  it("falls through 429/empty providers to the first that answers", async () => {
+  it("runs every provider even after an earlier provider succeeds", async () => {
     delete process.env.PROTOCOLS_JOURNAL_PROVIDERS; // all five, in order
+    const seen: string[] = [];
     const f = (async (url: string) => {
-      if (url.includes("crossref")) return new Response("rate", { status: 429 });
-      if (url.includes("europepmc")) return new Response(JSON.stringify({ resultList: { result: [] } }), { status: 200 });
-      if (url.includes("openalex")) return new Response(bodies.openalex, { status: 200 });
-      return new Response("{}", { status: 200 });
+      if (url.includes("crossref")) { seen.push("crossref"); return new Response(bodies.crossref, { status: 200 }); }
+      if (url.includes("europepmc")) { seen.push("europepmc"); return new Response(bodies.europepmc, { status: 200 }); }
+      if (url.includes("openalex")) { seen.push("openalex"); return new Response(bodies.openalex, { status: 200 }); }
+      if (url.includes("semanticscholar")) { seen.push("semanticscholar"); return new Response(bodies.semanticscholar, { status: 200 }); }
+      if (url.includes("esearch")) { seen.push("pubmed-esearch"); return new Response(bodies.esearch, { status: 200 }); }
+      seen.push("pubmed-esummary");
+      return new Response(bodies.esummary, { status: 200 });
     }) as unknown as typeof fetch;
     const out = await searchJournal(STAR, "CRISPR", 3, { fetchImpl: f });
-    expect(out.source).toBe("openalex"); // crossref 429, europepmc empty → openalex
+    expect(seen).toEqual(["crossref", "europepmc", "openalex", "semanticscholar", "pubmed-esearch", "pubmed-esummary"]);
+    expect(out.providers.map((provider) => provider.id)).toEqual(journalProviderOrder());
+    expect(out.providers.every((provider) => provider.status === "ok")).toBe(true);
+    expect(out.results).toHaveLength(5);
+    expect(out.source).toBe("crossref+europepmc+openalex+semanticscholar+pubmed");
+  });
+
+  it("deduplicates the same DOI across backends while retaining coverage", async () => {
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref,europepmc";
+    const sameEpmc = JSON.stringify({ resultList: { result: [{ title: "Same", doi: "10.1016/j.xpro.2023.102406", abstractText: "better snippet" }] } });
+    const f = (async (url: string) => new Response(url.includes("crossref") ? bodies.crossref : sameEpmc, { status: 200 })) as unknown as typeof fetch;
+    const out = await searchJournal(STAR, "CRISPR", 3, { fetchImpl: f });
     expect(out.results).toHaveLength(1);
+    expect(out.providers).toHaveLength(2);
+    expect(out.results[0]!.discoveredBy).toEqual(["crossref", "europepmc"]);
   });
 
   it("reports aggregated errors when every provider is empty/down", async () => {
@@ -125,6 +165,7 @@ describe("searchJournal chain", () => {
     const f = (async () => new Response("err", { status: 500 })) as unknown as typeof fetch;
     const out = await searchJournal(STAR, "zzz", 3, { fetchImpl: f });
     expect(out.results).toEqual([]);
+    expect(out.providers.map((provider) => provider.status)).toEqual(["error", "error"]);
     expect(out.error).toMatch(/crossref.*europepmc/s);
   });
 });

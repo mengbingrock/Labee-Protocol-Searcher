@@ -3,10 +3,9 @@
 // scholarly APIs, so we get real protocol titles, DOIs, and links without
 // scraping the paywalled/bot-blocked publisher sites.
 //
-// Five providers, tried as a fallback chain (first non-empty wins). Because
-// they're run by different organizations on different infrastructure, a chain
-// across them is extremely reliable — if one is down or rate-limiting (HTTP
-// 429), the next answers. Order is configurable via PROTOCOLS_JOURNAL_PROVIDERS
+// Five providers, all queried on every search. Because they're run by different
+// organizations and index different records, exhaustive coverage both survives
+// outages and recovers results one index may omit. Order is configurable via PROTOCOLS_JOURNAL_PROVIDERS
 // (comma-separated ids); default: crossref,europepmc,openalex,semanticscholar,pubmed.
 //
 //   - crossref         — DOI registry metadata for ~all publishers
@@ -30,6 +29,15 @@ const CONTACT = process.env.PROTOCOLS_CONTACT_EMAIL || "labee-protocol-searcher@
 export interface JournalSearchOutcome {
   results: RawResult[];
   source: string;
+  providers: JournalProviderOutcome[];
+  error?: string;
+}
+
+export interface JournalProviderOutcome {
+  id: string;
+  status: "ok" | "empty" | "error";
+  count: number;
+  elapsedMs: number;
   error?: string;
 }
 
@@ -110,7 +118,17 @@ const crossref: JournalSearchFn = async (journal, query, limit, opts) => {
 
 // ---- Europe PMC -----------------------------------------------------------
 interface EuropePmcResponse {
-  resultList?: { result?: { title?: string; doi?: string; abstractText?: string; id?: string }[] };
+  resultList?: {
+    result?: {
+      title?: string;
+      doi?: string;
+      abstractText?: string;
+      id?: string;
+      pmcid?: string;
+      isOpenAccess?: string;
+      inEPMC?: string;
+    }[];
+  };
 }
 const europepmc: JournalSearchFn = async (journal, query, limit, opts) => {
   const doFetch = opts.fetchImpl ?? fetch;
@@ -127,11 +145,18 @@ const europepmc: JournalSearchFn = async (journal, query, limit, opts) => {
   if (res.status !== 200) throw new Error(`Europe PMC HTTP ${res.status}`);
   const json = (await res.json()) as EuropePmcResponse;
   return (json.resultList?.result ?? [])
-    .map((r) => ({
-      title: text(r.title),
-      url: r.doi ? doiUrl(r.doi) : r.id ? `https://europepmc.org/article/MED/${r.id}` : "",
-      snippet: clean(r.abstractText),
-    }))
+    .map((r) => {
+      const evidence: string[] = [];
+      if (r.pmcid) evidence.push(`europepmc:pmcid:${r.pmcid.toUpperCase()}`);
+      if (/^(?:y|yes|true|1)$/i.test(r.isOpenAccess ?? "")) evidence.push("europepmc:open-access");
+      if (/^(?:y|yes|true|1)$/i.test(r.inEPMC ?? "")) evidence.push("europepmc:fulltext-indexed");
+      return {
+        title: text(r.title),
+        url: r.doi ? doiUrl(r.doi) : r.id ? `https://europepmc.org/article/MED/${r.id}` : "",
+        snippet: clean(r.abstractText),
+        ...(evidence.length > 0 ? { oaEvidence: evidence } : {}),
+      };
+    })
     .filter((r) => r.title && r.url)
     .slice(0, limit);
 };
@@ -143,6 +168,8 @@ interface OpenAlexResponse {
     doi?: string;
     id?: string;
     abstract_inverted_index?: Record<string, number[]>;
+    open_access?: { is_oa?: boolean };
+    best_oa_location?: { is_oa?: boolean; landing_page_url?: string; pdf_url?: string } | null;
   }[];
 }
 const openalex: JournalSearchFn = async (journal, query, limit, opts) => {
@@ -161,37 +188,64 @@ const openalex: JournalSearchFn = async (journal, query, limit, opts) => {
   if (res.status !== 200) throw new Error(`OpenAlex HTTP ${res.status}`);
   const json = (await res.json()) as OpenAlexResponse;
   return (json.results ?? [])
-    .map((w) => ({
-      title: text(w.display_name),
-      url: doiUrl(w.doi) || w.id || "",
-      snippet: fromInvertedIndex(w.abstract_inverted_index),
-    }))
+    .map((w) => {
+      const evidence: string[] = [];
+      if (w.open_access?.is_oa || w.best_oa_location?.is_oa) evidence.push("openalex:open-access");
+      const oaUrl = w.best_oa_location?.pdf_url ?? w.best_oa_location?.landing_page_url;
+      if (oaUrl) evidence.push(`openalex:oa-url:${oaUrl}`);
+      return {
+        title: text(w.display_name),
+        url: doiUrl(w.doi) || w.id || "",
+        snippet: fromInvertedIndex(w.abstract_inverted_index),
+        ...(evidence.length > 0 ? { oaEvidence: evidence } : {}),
+      };
+    })
     .filter((r) => r.title && r.url)
     .slice(0, limit);
 };
 
 // ---- Semantic Scholar -----------------------------------------------------
 interface SemanticScholarResponse {
-  data?: { title?: string; externalIds?: { DOI?: string }; url?: string; abstract?: string }[];
+  data?: {
+    title?: string;
+    externalIds?: { DOI?: string };
+    url?: string;
+    abstract?: string;
+    openAccessPdf?: { url?: string; status?: string } | null;
+  }[];
 }
 const semanticscholar: JournalSearchFn = async (journal, query, limit, opts) => {
   const doFetch = opts.fetchImpl ?? fetch;
   const url =
     `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}` +
     `&venue=${encodeURIComponent(journal.crossrefContainer)}` +
-    `&fields=title,externalIds,url,abstract&limit=${limit}`;
+    `&fields=title,externalIds,url,abstract,openAccessPdf&limit=${limit}`;
   const headers: Record<string, string> = { Accept: "application/json" };
   const key = process.env.SEMANTIC_SCHOLAR_API_KEY;
   if (key) headers["x-api-key"] = key;
-  const res = await fetchWithRetry(doFetch, url, { headers }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  // A keyless 429 is the shared public quota, not a transient request failure;
+  // test the backend once, record it, and move on to the other exhaustive APIs.
+  const res = await fetchWithRetry(
+    doFetch,
+    url,
+    { headers },
+    opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    { retries: key ? 2 : 0 },
+  );
   if (res.status !== 200) throw new Error(`Semantic Scholar HTTP ${res.status}`);
   const json = (await res.json()) as SemanticScholarResponse;
   return (json.data ?? [])
-    .map((w) => ({
-      title: text(w.title),
-      url: doiUrl(w.externalIds?.DOI) || w.url || "",
-      snippet: clean(w.abstract),
-    }))
+    .map((w) => {
+      const evidence = w.openAccessPdf?.url
+        ? [`semanticscholar:open-access-pdf:${w.openAccessPdf.url}`]
+        : [];
+      return {
+        title: text(w.title),
+        url: doiUrl(w.externalIds?.DOI) || w.url || "",
+        snippet: clean(w.abstract),
+        ...(evidence.length > 0 ? { oaEvidence: evidence } : {}),
+      };
+    })
     .filter((r) => r.title && r.url)
     .slice(0, limit);
 };
@@ -227,10 +281,12 @@ const pubmed: JournalSearchFn = async (journal, query, limit, opts) => {
       const it = result[id];
       if (!it) return null;
       const doi = (it.articleids ?? []).find((a) => a.idtype === "doi")?.value;
+      const pmcid = (it.articleids ?? []).find((a) => a.idtype === "pmc")?.value;
       return {
         title: text(it.title).replace(/\.$/, ""),
         url: doi ? doiUrl(doi) : `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
         snippet: "",
+        ...(pmcid ? { oaEvidence: [`pubmed:pmcid:${pmcid.toUpperCase()}`] } : {}),
       };
     })
     .filter((r): r is RawResult => Boolean(r && r.title && r.url))
@@ -255,11 +311,19 @@ export function journalProviderOrder(): string[] {
   return ids.length > 0 ? ids : DEFAULT_ORDER;
 }
 
-/**
- * Search a protocol journal across the active scholarly-API chain, returning
- * the first non-empty result set. Each provider is skipped on error / rate-
- * limit / empty, falling through to the next.
- */
+function resultKey(result: RawResult): string {
+  try {
+    const url = new URL(result.url);
+    if (url.hostname.toLowerCase() === "doi.org") {
+      return `doi:${decodeURIComponent(url.pathname).replace(/^\//, "").toLowerCase()}`;
+    }
+    return `${url.hostname.toLowerCase().replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "").toLowerCase()}`;
+  } catch {
+    return `${result.title.toLowerCase()}|${result.url.toLowerCase()}`;
+  }
+}
+
+/** Search every active scholarly API, merge unique results, and report coverage. */
 export async function searchJournal(
   journal: JournalInfo,
   query: string,
@@ -267,15 +331,47 @@ export async function searchJournal(
   opts: ProviderOptions = {},
 ): Promise<JournalSearchOutcome> {
   const errors: string[] = [];
-  for (const id of journalProviderOrder()) {
+  const providers: JournalProviderOutcome[] = [];
+  const merged = new Map<string, RawResult>();
+  const order = journalProviderOrder();
+  for (const id of order) {
     const fn = PROVIDERS[id]!;
+    const started = Date.now();
     try {
       const results = await fn(journal, query, limit, opts);
-      if (results.length > 0) return { results, source: id };
-      errors.push(`${id}: no results`);
+      providers.push({ id, status: results.length > 0 ? "ok" : "empty", count: results.length, elapsedMs: Date.now() - started });
+      if (results.length === 0) errors.push(`${id}: no results`);
+      for (const result of results) {
+        const key = resultKey(result);
+        const current = merged.get(key);
+        const discoveredBy = [...new Set([...(current?.discoveredBy ?? []), id])];
+        const oaEvidence = [...new Set([...(current?.oaEvidence ?? []), ...(result.oaEvidence ?? [])])];
+        if (!current) {
+          merged.set(key, {
+            ...result,
+            discoveredBy,
+            ...(oaEvidence.length > 0 ? { oaEvidence } : {}),
+          });
+        } else {
+          merged.set(key, {
+            ...current,
+            ...(!current.snippet && result.snippet ? { snippet: result.snippet } : {}),
+            discoveredBy,
+            ...(oaEvidence.length > 0 ? { oaEvidence } : {}),
+          });
+        }
+      }
     } catch (err) {
-      errors.push(`${id}: ${err instanceof Error ? err.message : "failed"}`);
+      const message = err instanceof Error ? err.message : "failed";
+      errors.push(`${id}: ${message}`);
+      providers.push({ id, status: "error", count: 0, elapsedMs: Date.now() - started, error: message });
     }
   }
-  return { results: [], source: journalProviderOrder().at(-1) ?? "none", error: errors.join("; ") };
+  const successful = providers.filter((provider) => provider.status === "ok").map((provider) => provider.id);
+  return {
+    results: [...merged.values()],
+    source: successful.join("+") || order.at(-1) || "none",
+    providers,
+    ...(errors.length > 0 ? { error: errors.join("; ") } : {}),
+  };
 }

@@ -8,6 +8,10 @@ export interface RawResult {
   title: string;
   url: string;
   snippet: string;
+  /** Scholarly backends that returned this exact result after DOI/URL merging. */
+  discoveredBy?: string[];
+  /** Strong, current open-access signals reported by those backends. */
+  oaEvidence?: string[];
 }
 
 export interface ProviderQueryResult {
@@ -23,6 +27,8 @@ export interface ProviderOptions {
   fetchImpl?: typeof fetch;
   /** Per-request timeout. */
   timeoutMs?: number;
+  /** Optional URL policy applied before every request, including redirects. */
+  validateUrl?: (url: string) => Promise<void>;
 }
 
 export interface WebProvider {

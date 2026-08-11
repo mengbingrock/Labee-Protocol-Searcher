@@ -8,6 +8,7 @@
   },
   "files": [
     "dist",
+    "fetchability-index.json",
     "README.md",
     "LICENSE"
   ],
@@ -21,6 +22,7 @@
     "search": "node --experimental-strip-types src/index.ts --query",
     "typecheck": "tsc --noEmit",
     "health": "npm run build && node scripts/health-check.mjs --write",
+    "test:agent:live": "node --experimental-strip-types scripts/agent-loop.ts",
     "test": "vitest run --passWithNoTests",
     "prepublishOnly": "npm run build"
   },
@@ -49,6 +51,7 @@
     "vitest": "^4.0.0"
   },
   "dependencies": {
+    "playwright-core": "^1.62.1",
     "unpdf": "^1.6.2"
   }
 }

@@ -199,9 +199,9 @@ describe("extractOaContent — cookie-gated redirect loop", () => {
 
     const out = await extractOaContent("https://www.idtdna.com/pages/x", { fetchImpl }, 20000);
     expect(out?.text).toContain("Digital PCR overview.");
-    // Two attempts at the normal path (fetchWithRetry retries once), then the
-    // manual hop that harvests the cookie, then the hop that succeeds with it.
-    expect(calls).toBe(4);
+    // Redirects are manual from the first request so every destination can be
+    // validated: one hop harvests the cookie and the second succeeds with it.
+    expect(calls).toBe(2);
   });
 
   it("gives up when the redirect sets no cookie", async () => {
@@ -261,6 +261,50 @@ describe("extractOaContent — multi-hop cookie chain", () => {
       return new Response("", { status: 302, headers: { location: `/x?n=${n + 1}` } });
     }) as unknown as typeof fetch;
     expect(await extractOaContent("https://endless.example/x?n=0", { fetchImpl }, 20000)).toBeNull();
+  });
+
+  it("validates every redirect hop before issuing the next request", async () => {
+    const visited: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      visited.push(url);
+      return new Response("", { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data" } });
+    }) as unknown as typeof fetch;
+    const validateUrl = async (url: string) => {
+      const host = new URL(url).hostname;
+      if (host === "169.254.169.254") throw new Error("unsafe-url: non-public address");
+    };
+
+    expect(await extractOaContent(
+      "https://93.184.216.34/article",
+      { fetchImpl, validateUrl },
+      20000,
+    )).toBeNull();
+    expect(visited).toEqual(["https://93.184.216.34/article"]);
+  });
+
+  it("does not forward cookies to a redirect on another host", async () => {
+    const cookies: string[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      cookies.push((init.headers as Record<string, string>).Cookie ?? "");
+      if (new URL(url).hostname === "public.example") {
+        return new Response("", {
+          status: 302,
+          headers: { location: "https://other.example/article", "set-cookie": "Session=secret; Path=/" },
+        });
+      }
+      return new Response("<article>Public protocol article text.</article>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+
+    const out = await extractOaContent(
+      "https://public.example/article",
+      { fetchImpl, validateUrl: async () => undefined },
+      20000,
+    );
+    expect(out?.text).toContain("Public protocol article text");
+    expect(cookies).toEqual(["", ""]);
   });
 });
 

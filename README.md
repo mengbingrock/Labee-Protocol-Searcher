@@ -72,6 +72,14 @@ renderer and `list_sources` all read that one field, so they can't drift apart
 from what `fetch` actually does. Re-check them if a site changes behaviour —
 the [daily health check](#backend-health) tells you when to.
 
+For journal DOIs, that source grade is only the starting prior. The daily health
+run fetches every unique DOI in its journal sweep and publishes the observation
+in [`fetchability-index.json`](fetchability-index.json). During search, a fresh
+exact DOI observation overrides the journal prior; otherwise current OA signals
+from Europe PMC, OpenAlex, Semantic Scholar, or PubMed refine it. Negative
+observations expire faster than successful full-text observations so indexing
+lag does not become a permanent false negative.
+
 **REBASE is why `neb.com` being blocked costs you little.** NEB publishes the
 canonical restriction-enzyme database as a keyless flat file, so recognition
 sites, cut positions, isoschizomers, methylation sensitivity and supplier lists
@@ -330,6 +338,43 @@ _status: ok_
 Every `fetch` result ends with a machine-readable `_status: …_` line, so a client
 can branch on the outcome without parsing prose.
 
+## Durable deep search
+
+The MCP server also exposes an opt-in agent workflow for searches that need more
+than one provider attempt:
+
+- `deep_search_start` accepts a query and, optionally, exactly five keyword
+  variants. It returns a job id immediately.
+- `deep_search_get` returns durable progress, findings, and attempt provenance.
+- `deep_search_cancel` requests cooperative cancellation.
+
+Every configured journal backend is called for every journal source and every
+available web-search backend is called for every vendor source. A successful
+backend does **not** stop the others. Results are merged by DOI or URL, every
+unique result id receives one native `fetch`, and unresolved records are tried
+through deterministic open-access links, known PDF routes, publisher URLs, and
+an optional local Chrome DevTools connection. Authentication walls, CAPTCHAs,
+robots exclusions, and paywalls are recorded as blockers; the agent does not
+bypass them.
+
+Jobs survive process restarts under `PROTOCOLS_AGENT_DATA_DIR` (default:
+`$XDG_STATE_HOME/labee-protocol-searcher/jobs`, or
+`~/.local/state/labee-protocol-searcher/jobs` when `XDG_STATE_HOME` is unset).
+To enable browser recovery,
+start a dedicated Chrome instance with remote debugging bound to loopback and
+set `PROTOCOLS_BROWSER_CDP_URL` if it is not `http://127.0.0.1:9222`:
+
+```sh
+open -na "Google Chrome" --args \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/labee-chrome-profile
+```
+
+The browser adapter accepts only a loopback CDP endpoint and validates target
+hosts. Keep the profile dedicated to this process; do not expose the debugging
+port to another machine.
+
 ## Where things live
 
 | Concern | File |
@@ -343,8 +388,11 @@ can branch on the outcome without parsing prose.
 | REBASE flat-file parser and enzyme lookup | [`src/rebase.ts`](src/rebase.ts) |
 | `fetch` id dispatch (`rebase:` / `doi:` / `pmid:` / `pmcid:` / `url:`) | [`src/fetch.ts`](src/fetch.ts) |
 | MCP tool definitions, JSON-RPC dispatch (stdio) | [`src/mcp.ts`](src/mcp.ts) |
+| Durable agent runner, storage, browser adapter, and URL policy | [`src/agent/`](src/agent/) |
+| Opt-in five-keyword live evaluation loop | [`scripts/agent-loop.ts`](scripts/agent-loop.ts) |
 | Streamable HTTP transport | [`src/http.ts`](src/http.ts) |
 | Live backend probes that rewrite the health block above | [`scripts/health-check.mjs`](scripts/health-check.mjs) |
+| CI-generated exact DOI retrieval observations | [`fetchability-index.json`](fetchability-index.json) |
 | One summary line per health run, appended forever (JSONL) | [`health-history.jsonl`](health-history.jsonl) |
 
 ## Install
@@ -422,6 +470,12 @@ env = { BRAVE_API_KEY = "..." }
 | `PROTOCOLS_CONTACT_EMAIL` | Sent to the Crossref/OpenAlex/NCBI "polite pools" for reliability, and required to enable the Unpaywall open-access full-text fallback in `fetch`. |
 | `PROTOCOLS_MCP_TOKEN` | HTTP mode only: shared secret required as `Authorization: Bearer <token>`. |
 | `PROTOCOLS_MCP_PORT` / `PROTOCOLS_MCP_HOST` | HTTP mode only: listen address. Default `3001` on `127.0.0.1`. |
+| `PROTOCOLS_AGENT_DATA_DIR` | Durable deep-search job directory. Default `$XDG_STATE_HOME/labee-protocol-searcher/jobs`, or `~/.local/state/labee-protocol-searcher/jobs`. |
+| `PROTOCOLS_BROWSER_CDP_URL` | Optional loopback Chrome DevTools URL. Default `http://127.0.0.1:9222`. |
+| `PROTOCOLS_FETCHABILITY_INDEX_URL` | Latest CI-generated DOI observations. Defaults to the raw `main`-branch index; set `off` to use only the bundled snapshot. |
+| `PROTOCOLS_FETCHABILITY_INDEX_PATH` | Local fallback index. Defaults to `fetchability-index.json` in the package root. |
+| `PROTOCOLS_FETCHABILITY_INDEX_REFRESH_MS` | In-process refresh interval. Default 15 minutes. |
+| `PROTOCOLS_FETCHABILITY_INDEX_TIMEOUT_MS` | Remote request timeout. Default 2.5 seconds, capped at 10 seconds. |
 
 Set these in your MCP client's `env` block, or — for a local clone — copy
 `.env.example` to `.env` (gitignored) beside the package. The server loads that
@@ -495,7 +549,15 @@ npm run build      # bundle to dist/index.mjs
 npm run test       # vitest (parsers, providers, journals, search routing, MCP handshake)
 npm run typecheck
 npm run health     # probe every live backend, rewrite the health block in this README
+npm run test:agent:live -- --loops 1 --limit 1 --browser auto
 ```
+
+The live agent test is intentionally separate from Vitest because it calls
+third-party services. Each loop uses the same five benchmark keywords, verifies
+that all five searches finished, checks that every backend/source pair was
+attempted for all five keywords, and checks the exact identities of the unique
+results and native fetch attempts. Its JSONL job state and summary are written under
+`.labee-runs/` unless `--out` selects another directory.
 
 `npm run health` also appends a summary line for the run to
 `health-history.jsonl`. Add `--no-history` (`node scripts/health-check.mjs
@@ -506,8 +568,9 @@ all and the block is only printed.
 Two workflows run in CI: [`ci.yml`](.github/workflows/ci.yml) typechecks, tests
 and builds on every push and pull request, and
 [`health.yml`](.github/workflows/health.yml) runs the live probes daily at 05:17
-UTC, then commits both the refreshed health block and the day's history line, so
-the record accumulates instead of being replaced. The health job is offline-safe
+UTC, fetches every unique DOI in its journal sweep, and commits the refreshed
+health block, DOI index, and day's history line. The full report and DOI index
+are also retained as workflow artifacts for 90 days. The health job is offline-safe
 in the sense that matters: absent API keys are reported as *not configured*
 rather than as outages, so a fork without secrets still publishes a truthful
 table. Set
@@ -515,8 +578,8 @@ table. Set
 variable) to exercise the vendor chain and the Unpaywall tier; `GOOGLE_API_KEY` +
 `GOOGLE_CSE_CX`, `SEMANTIC_SCHOLAR_API_KEY` and `NCBI_API_KEY` are optional.
 
-`npm run health` hits live third-party APIs — roughly 25 requests — so run it
-when you want a fresh reading, not in a loop.
+`npm run health` hits live third-party APIs and now fetches every unique journal
+DOI found by the sweep, so run it when you want a fresh reading, not in a loop.
 
 ## License
 
