@@ -1,109 +1,161 @@
 # Labee Protocol Searcher
 
-An **MCP (Model Context Protocol) stdio server** — and standalone CLI — that
-searches laboratory-protocol journals and reagent vendors for a technique, kit,
-reagent, or product, and returns ranked links per source. It also looks up
-restriction enzymes and fetches open-access protocol full text.
+## Find lab protocols your AI assistant can actually use
 
-- **Lean.** The server bundles to a single ESM file (`dist/index.mjs`) using only
-  Node's built-in `fetch`; the one runtime dependency, `unpdf`, powers PDF
-  extraction and is loaded lazily (only when a PDF is actually fetched).
-- Works with any MCP client — the examples below cover **Claude Code** and
-  **Codex CLI**.
+Labee helps researchers move from a scientific question to useful protocol
+content without searching journal sites, vendor catalogs, and enzyme databases
+one by one.
 
-## Why this exists
+Ask for a method in ordinary language. Labee searches across trusted protocol
+publishers and suppliers, brings matching results together, and tells your AI
+assistant what can be read now—full text, abstract, open-access link, or source
+link only.
 
-Direct/automated search of the target sites is **not reliably usable**. Fetching
-their *search pages* from a non-browser client returns, depending on the site and
-the moment, 403/503/login walls, or JavaScript-only shells with no results in
-the HTML:
+It works as a connector for ChatGPT, Claude, Codex, and other assistants that
+support MCP.
 
-| Source | Direct fetch of its search page |
+## The problems Labee solves
+
+| What slows researchers down | How Labee helps |
 | --- | --- |
-| cell.com/star-protocols | 403 Forbidden |
-| nature.com/nprot | 303 → login/paywall |
-| thermofisher.com | 200 but results are JS-rendered |
-| qiagen.com | 200 but results are JS-rendered |
-| neb.com | 403 / intermittent 200 |
-| bio-rad.com | 403 / 503 |
-| sigmaaldrich.com / emdmillipore.com | 503 / intermittent 200 |
-| takarabio.com | 403 |
-| promega.com | JS-only shell |
-| idtdna.com | connection blocked |
+| Protocols are scattered across journals, supplier sites, and databases. | One request searches all supported sources and presents the results together. |
+| Publisher and supplier search pages often block automation or hide results behind interactive pages. | Labee uses several independent discovery routes and keeps a direct source link when a page cannot be read automatically. |
+| A promising search result may lead to a paywall, an abstract, or a broken page. | Each paper is labeled with its latest known access result, so you know what your assistant can use before relying on it. |
+| One literature index can miss an important paper or be temporarily unavailable. | Labee checks multiple scholarly indexes and combines their findings instead of stopping after the first successful search. |
+| Deep searches can become repetitive, lose progress, or stop after a temporary failure. | Labee can run a durable search that records progress, tries every available route, removes duplicates, and resumes after a restart. |
+| Restriction-enzyme details are difficult to extract from commercial product pages. | Labee reads the open REBASE record for recognition sites, cut positions, isoschizomers, methylation sensitivity, and suppliers. |
 
-So this server routes each source to the backend that *actually* works for it.
+## What you can ask
 
-## Sources
+- “Find RNA extraction protocols for FFPE tissue that include
+  deparaffinization, proteinase K, and DNase treatment.”
+- “Compare open protocols for Gibson assembly.”
+- “Find a spatial transcriptomics protocol for formalin-fixed samples.”
+- “Show me the recognition site and cut position for BsaI.”
+- “Search all supported sources and retrieve the methods sections I can read.”
 
-Every source is **searchable**. Whether `fetch` can then retrieve a result's
-*content* is a separate question, and it does not follow from the source's kind —
-several vendor product pages extract cleanly while one of the journals is mostly
-paywalled. Each source therefore carries a measured grade, which `search` stamps
-onto every result it returns:
+You can narrow a request by organism, sample type, instrument, reagent, journal,
+supplier, or protocol step.
 
-| Grade | In results | Meaning |
-| --- | --- | --- |
-| ✅ `full` | `fetchable` | Retrieval essentially always works. |
-| ⚠️ `partial` | `may-not-fetch` | Works for some results, not others, and which is which isn't knowable at search time. Worth trying; be ready for a link back. |
-| ❌ `none` | `links-only` | The site refuses automated requests. `fetch` can only hand back the link, so spending a call buys nothing. |
+## What you receive
 
-| Source | `id` | Kind | Searched via | `fetch` |
-| --- | --- | --- | --- | --- |
-| STAR Protocols (Cell Press) | `star-protocols` | journal | scholarly chain | ✅ open-access full text |
-| Nature Protocols | `nature-protocols` | journal | scholarly chain | ⚠️ paywalled, but ~26% is deposited in PMC and readable; else the abstract |
-| JoVE | `jove` | journal | scholarly chain | ⚠️ many DOIs aren't indexed by Europe PMC |
-| Bio-protocol | `bio-protocol` | journal | scholarly chain | ✅ open-access full text |
-| Current Protocols (Wiley) | `current-protocols` | journal | scholarly chain | ✅ open-access full text |
-| protocols.io | `protocols-io` | vendor | web search `site:` | ⚠️ public `/view/` protocols only |
-| Thermo Fisher Scientific | `thermofisher` | vendor | web search `site:` | ✅ product pages extract |
-| QIAGEN | `qiagen` | vendor | web search `site:` | ✅ product pages extract |
-| New England Biolabs | `neb` | vendor | web search `site:` | ❌ 403 — use `rebase` for enzyme facts |
-| Bio-Rad | `bio-rad` | vendor | web search `site:` | ⚠️ product pages extract, some category URLs 403 |
-| Sigma-Aldrich (Merck) | `sigma-aldrich` | vendor | web search `site:` | ❌ 403 |
-| EMD Millipore | `emd-millipore` | vendor | web search `site:` | ❌ 403 |
-| Takara Bio | `takarabio` | vendor | web search `site:` | ✅ product pages extract |
-| Promega | `promega` | vendor | web search `site:` | ✅ product pages extract |
-| Integrated DNA Technologies | `idt` | vendor | web search `site:` | ✅ once the country-cookie gate is followed |
-| REBASE (restriction enzymes) | `rebase` | database | in-memory index of the REBASE release file | ✅ structured record |
+### One clear result list
 
-The grades live on each source in [`src/vendors.ts`](src/vendors.ts) as a
-`fetchability` field, with a note on each recording why. `search`, the result
-renderer and `list_sources` all read that one field, so they can't drift apart
-from what `fetch` actually does. Re-check them if a site changes behaviour —
-the [daily health check](#backend-health) tells you when to.
+Results from protocol journals, community repositories, suppliers, and REBASE
+appear in one response. Duplicate papers found by several indexes are combined.
 
-For journal DOIs, that source grade is only the starting prior. The daily health
-run fetches every unique DOI in its journal sweep and publishes the observation
-in [`fetchability-index.json`](fetchability-index.json). During search, a fresh
-exact DOI observation overrides the journal prior; otherwise current OA signals
-from Europe PMC, OpenAlex, Semantic Scholar, or PubMed refine it. Negative
-observations expire faster than successful full-text observations so indexing
-lag does not become a permanent false negative.
+### Honest access information
 
-**REBASE is why `neb.com` being blocked costs you little.** NEB publishes the
-canonical restriction-enzyme database as a keyless flat file, so recognition
-sites, cut positions, isoschizomers, methylation sensitivity and supplier lists
-come from the structured source rather than from scraping product pages. It's
-auto-included for enzyme-shaped queries (`EcoRI`, `GAATTC`).
+Labee separates discovery from access. Finding a paper does not automatically
+mean its full text is available.
 
-## Backend health
+| Label | What it means for you |
+| --- | --- |
+| **Verified full text** | Labee recently retrieved readable protocol content for this exact paper. |
+| **Verified abstract only** | The paper was found, but the latest check could retrieve only its abstract. |
+| **Open-access link** | A legal open copy was identified and linked. |
+| **Likely fetchable** | Current publisher or index information indicates that readable content should be available. |
+| **Untested** | Labee has not recently checked this exact paper; the journal’s usual availability is shown as guidance. |
+| **Link only** | The site does not allow automated reading, so Labee gives you the direct page instead. |
 
-Every backend this server talks to is third-party, and several of them change
-behaviour without notice: a search API starts rate-limiting, a vendor turns on a
-bot check. So the table below is measured rather than written — CI re-runs the
-probes daily and commits the result, which means a stale claim here is visible
-instead of silent. Run it yourself with `npm run health`.
+These observations are refreshed automatically. Successful full-text checks are
+kept longer, while negative results expire sooner because newly published papers
+may become available after indexing catches up.
 
-The declared grades are **not** rewritten automatically: one probe can't tell
-"always works" from "worked today". The check only flags a hard contradiction —
-a source graded `full` that refused the request, or one graded `none` that
-extracted cleanly — which is the signal to go re-grade it by hand.
+### Useful content, not just citations
 
-Nothing here is overwritten, either. Today's numbers go on top, but every run is
-also appended to [`health-history.jsonl`](health-history.jsonl) and the last 30
-days stay in the table below — a snapshot alone can't distinguish a backend that
-broke overnight from one that has been down for a fortnight, and only the second
-is a reason to re-route a chain.
+When permitted by the source, Labee returns readable protocol text and can focus
+on a section such as Methods, Materials, Procedure, or Troubleshooting. If full
+text is unavailable, it returns the best legal alternative it can find rather
+than pretending the retrieval succeeded.
+
+### A thorough search when the question is difficult
+
+For complex requests, Labee’s deep-search mode:
+
+- searches every configured source and available search route;
+- continues after one route succeeds so another source is not silently missed;
+- retrieves every unique result once, then tries additional legal open-access
+  routes when needed;
+- records what worked, what failed, and why;
+- keeps its progress so an interrupted search can continue later.
+
+Labee does not bypass paywalls, authentication, CAPTCHAs, robots restrictions,
+or other access controls.
+
+## Sources covered
+
+### Protocol journals and repositories
+
+- STAR Protocols
+- Nature Protocols
+- JoVE (Journal of Visualized Experiments)
+- Bio-protocol
+- Current Protocols
+- protocols.io
+
+### Reagent and instrument suppliers
+
+- Thermo Fisher Scientific
+- QIAGEN
+- New England Biolabs
+- Bio-Rad
+- Sigma-Aldrich / Merck
+- EMD Millipore
+- Takara Bio
+- Promega
+- Integrated DNA Technologies
+
+### Restriction enzymes
+
+- REBASE, the open Restriction Enzyme Database
+
+## Start using Labee
+
+### ChatGPT
+
+If your organization provides access to the hosted Labee service:
+
+1. Open **Settings → Plugins → MCPs → Add**.
+2. Choose **Streamable HTTP**.
+3. Enter `https://labee.online/mcp`.
+4. Enter the bearer-token environment variable supplied by your administrator
+   (normally `MCP_BEARER_TOKEN`).
+5. Save the connection and add Labee from the tools menu in a new conversation.
+
+Your access token should stay in an environment variable. Do not paste it into a
+README, chat message, screenshot, or public configuration file.
+
+### Claude, Codex, and other MCP clients
+
+Use the same hosted MCP address and bearer token in any client that supports a
+remote Streamable HTTP MCP connection. Teams that prefer to operate their own
+instance can use the self-hosting notes below.
+
+## What Labee is—and is not
+
+Labee is a research-discovery and retrieval assistant. It helps you find source
+material and understand what is accessible. It does not replace scientific
+judgment, institutional safety review, validated laboratory procedures, or the
+manufacturer’s current instructions for a regulated product.
+
+Before using a protocol at the bench, confirm critical parameters against the
+linked source and your laboratory’s approved practices.
+
+## Current service transparency
+
+Labee checks its supported search routes and a sample of paper-access results
+every day. The customer-facing summary from the latest run is:
+
+- all 16 supported sources returned search results;
+- 47 individual papers were tested for access;
+- 24 returned full text, 14 returned abstracts, 7 returned open-access links,
+  and 2 were not found by the available retrieval routes;
+- temporary trouble with one search provider does not stop the remaining
+  providers from being checked.
+
+<details>
+<summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
 _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-11T18:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
@@ -161,427 +213,60 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-08-05 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
 | 2026-07-30 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 12/16 | `semanticscholar`, `duckduckgo` | `sigma-aldrich` |
 
-_One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
+_One row per day, most recent first, last 30 days. Every run—including extra same-day ones—is kept in [`health-history.jsonl`](health-history.jsonl)._
 <!-- HEALTH:END -->
 
-## How it works
+</details>
 
-Two routes, picked per source:
+<details>
+<summary>Self-hosting and contributor notes</summary>
 
-- **Protocol journals (STAR Protocols, Nature Protocols, JoVE, Bio-protocol,
-  Current Protocols)** → a chain of five free, keyless scholarly APIs, tried in
-  order until one answers: **Crossref → Europe PMC → OpenAlex → Semantic Scholar
-  → PubMed (NCBI E-utilities)**. Reliable out of the box; reorder with
-  `PROTOCOLS_JOURNAL_PROVIDERS`. Optional `SEMANTIC_SCHOLAR_API_KEY` /
-  `NCBI_API_KEY` raise rate limits (both work without a key).
+### Install locally
 
-- **Reagent vendors + protocols.io** → a **web-search provider chain**, scoped
-  per source with a `site:` filter:
-
-  1. **Brave Search API** — if `BRAVE_API_KEY` is set (free tier).
-  2. **Google Programmable Search** — if `GOOGLE_API_KEY` + `GOOGLE_CSE_CX` are set
-     (free 100/day).
-  3. **DuckDuckGo** — keyless default; works for occasional queries but can be
-     rate-limited.
-
-  The chain returns the first non-empty result, so an unconfigured or
-  rate-limited provider transparently falls through.
-
-**Set a free Brave or Google key for reliable vendor search.** Without one, vendor
-results are best-effort via DuckDuckGo. Either way, every source is always paired
-with its deterministic on-site search URL, so the tool stays useful even when
-extraction is unavailable.
-
-## Tools
-
-Three tools, in a `search` → `fetch` shape.
-
-- `search({ query, sources?, limit? })` — search journals, reagent vendors, and
-  the REBASE enzyme database in one call. Returns a flat, ranked list where each
-  result carries a stable `id`, its `source`, and a `fetchable` grade
-  (`fetchable` / `may-not-fetch` / `links-only` — see [Sources](#sources)). `sources`
-  is an optional subset of source ids (REBASE is auto-included for enzyme-shaped
-  queries like `EcoRI` / `GAATTC`); `limit` is per-source (1–10, default 5). Each
-  source also echoes the effective scoped query it ran, so an empty result is
-  explainable.
-- `fetch({ id | ids, section? })` — retrieve a result's content by id:
-  - `rebase:<enzyme>` → the structured REBASE record (cut position,
-    isoschizomers, methylation sensitivity, source organism, suppliers).
-  - `doi:` / `pmid:` / `pmcid:` (or a bare identifier) → open-access full text via
-    **Europe PMC → NCBI → Unpaywall → abstract**, rendered section-by-section.
-    Pass `section` (a title substring, e.g. `Methods`) to read just one section.
-    Europe PMC serves only its open-access subset, so a PMCID it 404s on is
-    retried at NCBI, which also serves PMC *author manuscripts* — that one tier
-    is what makes a paywalled-journal protocol readable when its authors
-    deposited it. When Unpaywall only has a landing page or PDF (no PMC copy),
-    `fetch` extracts the text itself — HTML, XML, and PDF (via `unpdf`). If the
-    article is closed everywhere, the last tier returns its abstract and MeSH
-    terms rather than a bare link. The Unpaywall tier needs
-    `PROTOCOLS_CONTACT_EMAIL` set.
-  - `url:` → the page is fetched and its readable text extracted (HTML, XML, PDF;
-    protocols.io via its `.json`). Most vendors work; the few that refuse
-    automated requests return their link instead, graded `links-only` up front so
-    you needn't spend the call.
-  - Pass `ids` to fetch a batch in one call. Every result ends with a
-    `_status: …_` line (`ok`, `abstract-only`, `no-open-fulltext`, `oa-link`,
-    `not-fetchable`, `not-found`, `bad-id`).
-- `list_sources()` — the source catalog and which providers are configured.
-
-## Worked example
-
-A real run against four sources — one journal, two vendors that behave
-differently, and the enzyme database. Output is verbatim, trimmed only where
-marked.
-
-```sh
-node dist/index.mjs --query "Gibson assembly" \
-  --sources star-protocols,neb,promega,rebase --limit 2
-```
-
-```markdown
-# Search: "Gibson assembly"
-
-## STAR Protocols (Cell Press) _(journal)_
-Query: `Gibson assembly in STAR Protocols (Cell Press)`
-Search page: https://www.cell.com/action/doSearch?journalCode=star-protocols&field1=AllField&text1=Gibson%20assembly
-- [In situ probe and inhibitory RNA synthesis using streamlined gene cloning with Gibson assembly](https://doi.org/10.1016/j.xpro.2022.101458)
-  `doi:10.1016/j.xpro.2022.101458` · fetchable
-
-## New England Biolabs (NEB) _(vendor)_
-Query: `site:neb.com Gibson assembly`
-Search page: https://www.neb.com/en-us/search?searchValue=Gibson%20assembly
-- [Gibson Assembly | NEB](https://www.neb.com/en-us/applications/cloning-and-synthetic-biology/dna-assembly-and-cloning/gibson-assembly)
-  `url:https://www.neb.com/…/gibson-assembly` · links-only — Daniel G. Gibson, of the
-  J. Craig Venter Institute, described a robust exonuclease-based method to assemble
-  DNA seamlessly and in the correct order, eponymously known as Gibson Assembly.
-
-## Promega _(vendor)_
-Query: `site:promega.com Gibson assembly`
-Search page: https://www.promega.com/search/?q=Gibson%20assembly
-- [Biomath Calculators | DNA Calculator | Vector Insert Ratio](https://www.promega.com/resources/tools/biomath/)
-  `url:https://www.promega.com/resources/tools/biomath/` · fetchable — DNA calculations
-  to convert µg to pmol for double-stranded and single-stranded DNA…
-
-## REBASE (restriction enzymes) _(database)_
-Query: `Gibson assembly (by name)`
-_No extractable results._
-
-_6 results across 4 sources. Call `fetch` with a result's id to read it. `links-only`
-results can't be retrieved — open their url instead; `may-not-fetch` ones are worth
-trying but can come back as a link._
-```
-
-Four things worth reading off that output:
-
-- **Every source reports the query it actually ran** (`site:neb.com Gibson
-  assembly`), so an empty result is explainable rather than mysterious. REBASE
-  correctly finds nothing — "Gibson assembly" is not an enzyme name.
-- **The two vendors are graded differently.** NEB is `links-only`; Promega is
-  `fetchable`. Inferring from "vendor" would have been wrong for one of them.
-- **The search page is always present**, even for the source that returned
-  nothing, because it's a constructed URL rather than a fetch.
-- **Snippets are the source's own text**, passed through — `search` never
-  summarises, and never calls a model.
-
-Then retrieve content by id. The grades hold:
-
-```sh
-node dist/index.mjs --fetch "doi:10.1016/j.xpro.2022.101458"
-```
-
-```markdown
-# In situ probe and inhibitory RNA synthesis using streamlined gene cloning with Gibson assembly.
-
-_Source: Europe PMC open-access full text (PMC9207569)._
-
-_Sections: Before you begin · Design primers with Gibson overhangs · Prepare Gibson
-Reaction Buffer and master mix · Key resources table · Materials and equipment ·
-Step-by-step method details · Total RNA extraction · cDNA synthesis · … _
-[full text follows, procedure sections first]
-```
-
-Pass `section` (`--fetch <id>` in the CLI reads the whole article; the MCP tool
-takes `{ id, section: "Troubleshooting" }`) to read one section instead.
-
-```sh
-node dist/index.mjs --fetch "url:https://www.neb.com/en-us/applications/…/gibson-assembly"
-```
-
-```markdown
-This page can't be retrieved automatically — the site refused the request.
-
-Open it directly: https://www.neb.com/en-us/applications/…/gibson-assembly
-
-_status: not-fetchable_
-```
-
-That's the `links-only` grade being honest rather than the tool failing — and it's
-why you'd go to REBASE for enzyme facts instead:
-
-```sh
-node dist/index.mjs --fetch "rebase:BsaI"
-```
-
-```markdown
-# BsaI
-
-- **Recognition site / cut:** `GGTCTC(1/5)`
-- **Isoschizomers:** Eco31I,Bli49I,Bli161I,Bso31I,BspTNI,Eco51I,PpaI,…
-- **Methylation sensitivity:** -4(6)
-- **Source organism:** Bacillus stearothermophilus 6-55
-- **Supplied by NEB.** Commercial suppliers: New England Biolabs, Sigma Chemical
-  Corporation, Vivantis Technologies.
-
-_Source: REBASE (rebase.neb.com), NEB's open Restriction Enzyme Database._
-
-_status: ok_
-```
-
-Every `fetch` result ends with a machine-readable `_status: …_` line, so a client
-can branch on the outcome without parsing prose.
-
-## Durable deep search
-
-The MCP server also exposes an opt-in agent workflow for searches that need more
-than one provider attempt:
-
-- `deep_search_start` accepts a query and, optionally, exactly five keyword
-  variants. It returns a job id immediately.
-- `deep_search_get` returns durable progress, findings, and attempt provenance.
-- `deep_search_cancel` requests cooperative cancellation.
-
-Every configured journal backend is called for every journal source and every
-available web-search backend is called for every vendor source. A successful
-backend does **not** stop the others. Results are merged by DOI or URL, every
-unique result id receives one native `fetch`, and unresolved records are tried
-through deterministic open-access links, known PDF routes, publisher URLs, and
-an optional local Chrome DevTools connection. Authentication walls, CAPTCHAs,
-robots exclusions, and paywalls are recorded as blockers; the agent does not
-bypass them.
-
-Jobs survive process restarts under `PROTOCOLS_AGENT_DATA_DIR` (default:
-`$XDG_STATE_HOME/labee-protocol-searcher/jobs`, or
-`~/.local/state/labee-protocol-searcher/jobs` when `XDG_STATE_HOME` is unset).
-To enable browser recovery,
-start a dedicated Chrome instance with remote debugging bound to loopback and
-set `PROTOCOLS_BROWSER_CDP_URL` if it is not `http://127.0.0.1:9222`:
-
-```sh
-open -na "Google Chrome" --args \
-  --remote-debugging-address=127.0.0.1 \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/labee-chrome-profile
-```
-
-The browser adapter accepts only a loopback CDP endpoint and validates target
-hosts. Keep the profile dedicated to this process; do not expose the debugging
-port to another machine.
-
-## Where things live
-
-| Concern | File |
-| --- | --- |
-| Source catalog, `site:` scoping, on-site search URLs, `fetchability` grades | [`src/vendors.ts`](src/vendors.ts) |
-| Search orchestration, per-vendor bucketing, id minting, result rendering | [`src/search.ts`](src/search.ts) |
-| Journal chain (Crossref → Europe PMC → OpenAlex → Semantic Scholar → PubMed) | [`src/journals.ts`](src/journals.ts) |
-| Web-search providers and their priority order | [`src/providers/`](src/providers/) |
-| Open-access full text: Europe PMC → NCBI → Unpaywall → abstract, JATS → markdown | [`src/fulltext.ts`](src/fulltext.ts) |
-| Page text extraction (HTML/XML/PDF, protocols.io JSON, cookie gates) | [`src/extract.ts`](src/extract.ts) |
-| REBASE flat-file parser and enzyme lookup | [`src/rebase.ts`](src/rebase.ts) |
-| `fetch` id dispatch (`rebase:` / `doi:` / `pmid:` / `pmcid:` / `url:`) | [`src/fetch.ts`](src/fetch.ts) |
-| MCP tool definitions, JSON-RPC dispatch (stdio) | [`src/mcp.ts`](src/mcp.ts) |
-| Durable agent runner, storage, browser adapter, and URL policy | [`src/agent/`](src/agent/) |
-| Opt-in five-keyword live evaluation loop | [`scripts/agent-loop.ts`](scripts/agent-loop.ts) |
-| Streamable HTTP transport | [`src/http.ts`](src/http.ts) |
-| Live backend probes that rewrite the health block above | [`scripts/health-check.mjs`](scripts/health-check.mjs) |
-| CI-generated exact DOI retrieval observations | [`fetchability-index.json`](fetchability-index.json) |
-| One summary line per health run, appended forever (JSONL) | [`health-history.jsonl`](health-history.jsonl) |
-
-## Install
-
-### Option A — npx (no clone)
-
-Once published to npm, any MCP client can spawn it with `npx`. No local checkout,
-no build step.
-
-**Claude Code:**
-
-```sh
-claude mcp add protocols -- npx -y @mengbingrock/labee-protocol-searcher
-```
-
-Or add it by hand to your MCP config (`~/.claude.json` or a project
-`.mcp.json`):
-
-```jsonc
-{
-  "mcpServers": {
-    "protocols": {
-      "command": "npx",
-      "args": ["-y", "@mengbingrock/labee-protocol-searcher"],
-      "env": { "BRAVE_API_KEY": "..." }
-    }
-  }
-}
-```
-
-**Codex CLI** (`~/.codex/config.toml`):
-
-```toml
-[mcp_servers.protocols]
-command = "npx"
-args = ["-y", "@mengbingrock/labee-protocol-searcher"]
-env = { BRAVE_API_KEY = "..." }
-```
-
-### Option B — git clone + build (no npm account needed)
+Requires Node.js 20 or newer.
 
 ```sh
 git clone https://github.com/mengbingrock/Labee-Protocol-Searcher.git
 cd Labee-Protocol-Searcher
 npm install
-npm run build        # → dist/index.mjs (bundled; unpdf stays in node_modules)
+npm run build
 ```
 
-Then point your client at the built file's absolute path.
+The built server is `dist/index.mjs`. Run it as a local MCP process or as a
+loopback HTTP service behind your own authenticated HTTPS proxy.
 
-**Claude Code:**
+You can also use the published package:
 
 ```sh
-claude mcp add protocols -- node /abs/path/to/Labee-Protocol-Searcher/dist/index.mjs
+npx -y @mengbingrock/labee-protocol-searcher
 ```
 
-**Codex CLI** (`~/.codex/config.toml`):
+Optional provider keys improve search capacity, but the journal search and core
+open-access retrieval work without them. Copy `.env.example` to `.env` for the
+available settings. Never commit real credentials.
 
-```toml
-[mcp_servers.protocols]
-command = "node"
-args = ["/abs/path/to/Labee-Protocol-Searcher/dist/index.mjs"]
-env = { BRAVE_API_KEY = "..." }
-```
-
-## Configuration (env)
-
-| Var | Purpose |
-| --- | --- |
-| `BRAVE_API_KEY` | Enable the Brave Search provider (recommended). |
-| `GOOGLE_API_KEY` + `GOOGLE_CSE_CX` | Enable the Google Programmable Search provider. |
-| `PROTOCOLS_SEARCH_PROVIDER` | Force a single vendor provider: `brave` \| `google` \| `duckduckgo`. |
-| `PROTOCOLS_JOURNAL_PROVIDERS` | Reorder/limit the journal chain (comma-separated): `crossref,europepmc,openalex,semanticscholar,pubmed`. |
-| `SEMANTIC_SCHOLAR_API_KEY` / `NCBI_API_KEY` | Optional; raise rate limits for those journal providers. |
-| `PROTOCOLS_CONTACT_EMAIL` | Sent to the Crossref/OpenAlex/NCBI "polite pools" for reliability, and required to enable the Unpaywall open-access full-text fallback in `fetch`. |
-| `PROTOCOLS_MCP_TOKEN` | HTTP mode only: shared secret required as `Authorization: Bearer <token>`. |
-| `PROTOCOLS_MCP_PORT` / `PROTOCOLS_MCP_HOST` | HTTP mode only: listen address. Default `3001` on `127.0.0.1`. |
-| `PROTOCOLS_AGENT_DATA_DIR` | Durable deep-search job directory. Default `$XDG_STATE_HOME/labee-protocol-searcher/jobs`, or `~/.local/state/labee-protocol-searcher/jobs`. |
-| `PROTOCOLS_BROWSER_CDP_URL` | Optional loopback Chrome DevTools URL. Default `http://127.0.0.1:9222`. |
-| `PROTOCOLS_FETCHABILITY_INDEX_URL` | Latest CI-generated DOI observations. Defaults to the raw `main`-branch index; set `off` to use only the bundled snapshot. |
-| `PROTOCOLS_FETCHABILITY_INDEX_PATH` | Local fallback index. Defaults to `fetchability-index.json` in the package root. |
-| `PROTOCOLS_FETCHABILITY_INDEX_REFRESH_MS` | In-process refresh interval. Default 15 minutes. |
-| `PROTOCOLS_FETCHABILITY_INDEX_TIMEOUT_MS` | Remote request timeout. Default 2.5 seconds, capped at 10 seconds. |
-
-Set these in your MCP client's `env` block, or — for a local clone — copy
-`.env.example` to `.env` (gitignored) beside the package. The server loads that
-file at startup and never overrides a variable already set in the real
-environment, so the client's `env` block always wins.
-
-**PDF extraction:** when an open-access copy is only a PDF, `fetch` extracts its
-text with [`unpdf`](https://github.com/unjs/unpdf) (pdf.js under the hood). It's
-a normal dependency, loaded lazily so the PDF engine is only pulled in when a PDF
-is actually fetched; a malformed or encrypted PDF falls back to returning the link.
-
-## Run as a remote (HTTP) server
-
-Besides stdio, the server speaks MCP's Streamable HTTP transport, so one hosted
-instance can serve many clients instead of each one spawning its own child
-process:
+### Useful commands
 
 ```sh
-PROTOCOLS_MCP_TOKEN=$(openssl rand -hex 32) node dist/index.mjs --http --port 3001
-```
-
-It binds `127.0.0.1` by default — put a TLS-terminating proxy in front rather
-than exposing the port. Binding a non-loopback address without
-`PROTOCOLS_MCP_TOKEN` set is refused outright, since the tools spend
-third-party API quota and an open endpoint spends someone else's budget.
-
-The endpoint is `POST /mcp`; `GET /healthz` is an unauthenticated liveness
-probe. The server is sessionless (no `Mcp-Session-Id`), so clients never need to
-resume, and it doesn't offer a server-initiated SSE stream — `GET /mcp` returns
-405, as the spec requires of servers that don't.
-
-Point a client at it with a bearer token:
-
-```jsonc
-// claude --mcp-config '<this>'
-{ "mcpServers": { "protocols": {
-    "type": "http",
-    "url": "https://example.com/mcp",
-    "headers": { "Authorization": "Bearer YOUR_TOKEN" } } } }
-```
-
-```toml
-# ~/.codex/config.toml — codex reads the token from the named env var
-[mcp_servers.protocols]
-url = "https://example.com/mcp"
-bearer_token_env_var = "LABEE_MCP_TOKEN"
-```
-
-## Use as a CLI
-
-```sh
-# after `npm run build`:
-node dist/index.mjs --query "CRISPR knockout" --sources star-protocols,nature-protocols
-node dist/index.mjs --query "Gibson assembly" --sources neb --limit 3
-node dist/index.mjs --query "Q5 polymerase" --json
-node dist/index.mjs --fetch "rebase:EcoRI"
-node dist/index.mjs --fetch "doi:10.1016/j.xpro.2022.101458"
-node dist/index.mjs --list-sources
-
-# or via the bin, when installed globally / with npx:
-npx @mengbingrock/labee-protocol-searcher --query "RNA extraction FFPE"
-```
-
-In dev, skip the build with `npm run dev -- --query "..."`
-(`node --experimental-strip-types src/index.ts`).
-
-## Develop
-
-```sh
-npm run build      # bundle to dist/index.mjs
-npm run test       # vitest (parsers, providers, journals, search routing, MCP handshake)
+npm run build
 npm run typecheck
-npm run health     # probe every live backend, rewrite the health block in this README
+npm test
+npm run health
 npm run test:agent:live -- --loops 1 --limit 1 --browser auto
 ```
 
-The live agent test is intentionally separate from Vitest because it calls
-third-party services. Each loop uses the same five benchmark keywords, verifies
-that all five searches finished, checks that every backend/source pair was
-attempted for all five keywords, and checks the exact identities of the unique
-results and native fetch attempts. Its JSONL job state and summary are written under
-`.labee-runs/` unless `--out` selects another directory.
+### Main project areas
 
-`npm run health` also appends a summary line for the run to
-`health-history.jsonl`. Add `--no-history` (`node scripts/health-check.mjs
---write --no-history`) when you're re-running probes to debug one source and
-don't want that noise in the record; without `--write` nothing is recorded at
-all and the block is only printed.
+| Area | Location |
+| --- | --- |
+| Search and source coverage | `src/search.ts`, `src/journals.ts`, `src/providers/` |
+| Content retrieval | `src/fetch.ts`, `src/fulltext.ts`, `src/extract.ts` |
+| Durable deep search | `src/agent/` |
+| MCP and hosted transport | `src/mcp.ts`, `src/http.ts` |
+| Daily reliability checks | `scripts/health-check.mjs`, `.github/workflows/health.yml` |
+| Per-paper access observations | `fetchability-index.json` |
 
-Two workflows run in CI: [`ci.yml`](.github/workflows/ci.yml) typechecks, tests
-and builds on every push and pull request, and
-[`health.yml`](.github/workflows/health.yml) runs the live probes daily at 05:17
-UTC, fetches every unique DOI in its journal sweep, and commits the refreshed
-health block, DOI index, and day's history line. The full report and DOI index
-are also retained as workflow artifacts for 90 days. The health job is offline-safe
-in the sense that matters: absent API keys are reported as *not configured*
-rather than as outages, so a fork without secrets still publishes a truthful
-table. Set
-`BRAVE_API_KEY` (repository secret) and `PROTOCOLS_CONTACT_EMAIL` (repository
-variable) to exercise the vendor chain and the Unpaywall tier; `GOOGLE_API_KEY` +
-`GOOGLE_CSE_CX`, `SEMANTIC_SCHOLAR_API_KEY` and `NCBI_API_KEY` are optional.
-
-`npm run health` hits live third-party APIs and now fetches every unique journal
-DOI found by the sweep, so run it when you want a fresh reading, not in a loop.
+</details>
 
 ## License
 
