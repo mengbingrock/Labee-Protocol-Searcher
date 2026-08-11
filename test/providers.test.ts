@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { parseHtmlResults, parseLiteResults, duckduckgoProvider } from "../src/providers/duckduckgo.ts";
 import { braveProvider } from "../src/providers/brave.ts";
 import { googleProvider } from "../src/providers/google.ts";
+import { webSearch } from "../src/providers/registry.ts";
 
 const HTML_SAMPLE = `
 <div class="result results_links">
@@ -108,6 +109,32 @@ describe("keyed providers", () => {
       )) as unknown as typeof fetch;
     const res = await googleProvider.run("site:qiagen.com rneasy", 5, { fetchImpl: fakeFetch });
     expect(res.results[0]).toMatchObject({ url: "https://www.qiagen.com/h", title: "RNeasy Handbook" });
+  });
+
+  it("runs every available web backend and records exhaustive coverage", async () => {
+    process.env.BRAVE_API_KEY = "k";
+    process.env.GOOGLE_API_KEY = "k";
+    process.env.GOOGLE_CSE_CX = "cx";
+    delete process.env.PROTOCOLS_SEARCH_PROVIDER;
+    const seen: string[] = [];
+    const fakeFetch = (async (url: string) => {
+      if (url.includes("api.search.brave.com")) {
+        seen.push("brave");
+        return new Response(JSON.stringify({ web: { results: [{ title: "Q5", url: "https://www.neb.com/en-us/products/m0491", description: "brave" }] } }), { status: 200 });
+      }
+      if (url.includes("googleapis.com")) {
+        seen.push("google");
+        return new Response(JSON.stringify({ items: [{ title: "Q5", link: "https://www.neb.com/en-us/products/m0491", snippet: "google" }] }), { status: 200 });
+      }
+      seen.push("duckduckgo");
+      return new Response(LITE_SAMPLE, { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await webSearch("site:neb.com Q5", 3, { fetchImpl: fakeFetch });
+    expect(seen).toEqual(["brave", "google", "duckduckgo"]);
+    expect(out.providers.map((provider) => [provider.id, provider.status])).toEqual([
+      ["brave", "ok"], ["google", "ok"], ["duckduckgo", "ok"],
+    ]);
+    expect(out.results).toHaveLength(1);
   });
 });
 

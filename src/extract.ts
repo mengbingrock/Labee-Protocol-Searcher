@@ -11,6 +11,7 @@
 //          PDF just returns null and the caller falls back to the plain OA link.
 
 import { type ProviderOptions, decodeEntities, fetchWithRetry, stripTags, userAgent } from "./providers/types.ts";
+import { assertSafePublicUrl } from "./agent/url-policy.ts";
 
 export type ExtractFormat = "html" | "xml" | "pdf" | "json";
 
@@ -185,13 +186,6 @@ function renderProtocolsIo(payload: unknown): string {
   return out.join("\n\n").trim();
 }
 
-/** Does this error mean fetch gave up bouncing between redirects? */
-function isRedirectLoop(err: unknown): boolean {
-  const cause = (err as { cause?: { message?: string; code?: string } })?.cause;
-  const msg = `${cause?.message ?? ""} ${cause?.code ?? ""} ${(err as Error)?.message ?? ""}`;
-  return /redirect count exceeded|too many redirects|ERR_TOO_MANY_REDIRECTS/i.test(msg);
-}
-
 /** Absorb a response's Set-Cookie headers into `jar` (last value wins). */
 function harvestCookies(res: Response, jar: Map<string, string>): void {
   for (const raw of res.headers.getSetCookie?.() ?? []) {
@@ -214,10 +208,15 @@ async function fetchFollowingWithCookies(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  validateUrl: (url: string) => Promise<void>,
 ): Promise<Response> {
-  const jar = new Map<string, string>();
+  const jars = new Map<string, Map<string, string>>();
   let current = url;
   for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+    await validateUrl(current);
+    const host = new URL(current).hostname.toLowerCase();
+    const jar = jars.get(host) ?? new Map<string, string>();
+    jars.set(host, jar);
     const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
     const res = await fetchWithRetry(
       doFetch,
@@ -243,21 +242,18 @@ async function fetchFollowingWithCookies(
 }
 
 /**
- * `fetchWithRetry`, falling back to manual cookie-carrying redirect following
- * when — and only when — the plain request dies in a redirect loop.
+ * Manual redirect handling is mandatory: automatic redirect following would
+ * let a public URL bounce to loopback, a private network, or cloud metadata
+ * before the destination policy could inspect the next hop.
  */
 async function fetchAllowingCookieGate(
   doFetch: typeof fetch,
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  validateUrl: (url: string) => Promise<void>,
 ): Promise<Response> {
-  try {
-    return await fetchWithRetry(doFetch, url, init, timeoutMs, { retries: 1 });
-  } catch (err) {
-    if (!isRedirectLoop(err)) throw err;
-    return fetchFollowingWithCookies(doFetch, url, init, timeoutMs);
-  }
+  return fetchFollowingWithCookies(doFetch, url, init, timeoutMs, validateUrl);
 }
 
 /**
@@ -273,15 +269,20 @@ export async function extractOaContent(
 ): Promise<Extracted | null> {
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 15000;
+  // Unit tests and embedders with a synthetic fetch can inject the matching
+  // policy. Real network calls always use the public-address policy.
+  const validateUrl = opts.validateUrl ?? (opts.fetchImpl && opts.fetchImpl !== fetch
+    ? async () => undefined
+    : async (candidate: string) => { await assertSafePublicUrl(candidate, []); });
   try {
     const jsonUrl = protocolsIoJsonUrl(url);
     if (jsonUrl) {
-      const jres = await fetchWithRetry(
+      const jres = await fetchAllowingCookieGate(
         doFetch,
         jsonUrl,
         { headers: { "User-Agent": userAgent(url.length), Accept: "application/json" } },
         timeoutMs,
-        { retries: 1 },
+        validateUrl,
       );
       if (jres.status === 200) {
         const text = renderProtocolsIo(await jres.json());
@@ -301,6 +302,7 @@ export async function extractOaContent(
         },
       },
       timeoutMs,
+      validateUrl,
     );
     if (res.status !== 200) return null;
 

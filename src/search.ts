@@ -14,6 +14,12 @@ import { webSearch } from "./providers/registry.ts";
 import { searchJournal } from "./journals.ts";
 import { resolveVendors, getVendor, type Fetchability, type Vendor } from "./vendors.ts";
 import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
+import {
+  assessDoiAvailability,
+  loadFetchabilityIndex,
+  type DoiAvailabilityEvidence,
+  type FetchabilityIndex,
+} from "./fetchability-index.ts";
 
 export interface VendorResults {
   id: string;
@@ -23,7 +29,17 @@ export interface VendorResults {
   results: RawResult[];
   /** Which backend produced the results (e.g. "crossref", "brave", "duckduckgo"). */
   source?: string;
+  /** Exhaustive scholarly-backend coverage for journal sources. */
+  providers?: SearchBackendOutcome[];
   /** Present when live result extraction returned nothing for this source. */
+  error?: string;
+}
+
+export interface SearchBackendOutcome {
+  id: string;
+  status: "ok" | "empty" | "error" | "unavailable";
+  count: number;
+  elapsedMs: number;
   error?: string;
 }
 
@@ -132,9 +148,14 @@ export async function searchProtocols(
   await mapPool(journals, concurrency, async (v) => {
     const bucket = buckets.get(v.id)!;
     const outcome = await searchJournal(v.journal!, trimmed, limit, providerOpts);
+    bucket.providers = outcome.providers;
     if (outcome.results.length > 0) {
       bucket.results = outcome.results;
       bucket.source = outcome.source;
+      if (outcome.error) {
+        partial = true;
+        bucket.error = outcome.error;
+      }
     } else {
       partial = true;
       bucket.error = outcome.error ?? "no results";
@@ -143,10 +164,11 @@ export async function searchProtocols(
 
   // --- Vendors: combined web-search queries, bucketed by hostname. ---
   const webVendors = vendors.filter((v) => v.kind === "vendor");
-  for (const group of chunk(webVendors, batchSize)) {
+  await mapPool(chunk(webVendors, batchSize), concurrency, async (group) => {
     const sites = group.map((v) => `site:${v.ddgSite}`).join(" OR ");
     const combined = group.length === 1 ? `${sites} ${trimmed}` : `(${sites}) ${trimmed}`;
     const outcome = await webSearch(combined, limit * group.length, providerOpts);
+    for (const v of group) buckets.get(v.id)!.providers = outcome.providers;
     if (outcome.results.length === 0) {
       partial = true;
       const reason = outcome.error ?? "no results";
@@ -156,7 +178,7 @@ export async function searchProtocols(
           bucket.error = `${reason} (via ${outcome.provider})`;
         }
       }
-      continue;
+      return;
     }
     for (const r of outcome.results) {
       const vendor = matchVendor(r.url, group);
@@ -174,7 +196,7 @@ export async function searchProtocols(
         buckets.get(v.id)!.error ??= `no results (via ${outcome.provider})`;
       }
     }
-  }
+  });
 
   return {
     query: trimmed,
@@ -239,6 +261,10 @@ export interface UnifiedResult {
   snippet?: string;
   /** How likely `fetch(id)` is to return real content. */
   fetchable: Fetchability;
+  /** Search backends that independently discovered this merged paper. */
+  discoveredBy?: string[];
+  /** Evidence hierarchy behind the legacy `fetchable` grade. */
+  availability?: DoiAvailabilityEvidence;
 }
 
 export interface SourceStatus {
@@ -251,6 +277,8 @@ export interface SourceStatus {
   /** Human-readable form of the query actually scoped to this source. */
   query?: string;
   count: number;
+  /** Per-backend status when this is a journal source. */
+  providers?: SearchBackendOutcome[];
   error?: string;
 }
 
@@ -267,6 +295,18 @@ export interface UnifiedOptions extends Omit<SearchOptions, "vendors"> {
   sources?: readonly string[];
   /** Force REBASE lookup mode when the query is enzyme-shaped. */
   by?: "name" | "site";
+  /** Inject a validated CI index (primarily for hermetic tests). */
+  fetchabilityIndex?: FetchabilityIndex;
+}
+
+function gradeForEvidence(evidence: DoiAvailabilityEvidence): Fetchability {
+  if (evidence.availability === "verified-full-text" || evidence.availability === "likely-fetchable") {
+    return "full";
+  }
+  if (evidence.availability === "verified-unavailable" || evidence.availability === "unlikely-fetchable") {
+    return "none";
+  }
+  return "partial";
 }
 
 /**
@@ -317,6 +357,13 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
   const results: UnifiedResult[] = [];
   const sources: SourceStatus[] = [];
   let partial = base.partial;
+  const hasJournalResults = base.vendors.some(
+    (bucket) => getVendor(bucket.id)?.kind === "journal" && bucket.results.length > 0,
+  );
+  const fetchabilityIndex = hasJournalResults
+    ? opts.fetchabilityIndex ??
+      (await loadFetchabilityIndex({ allowRemote: opts.providerOpts?.fetchImpl === undefined }))
+    : undefined;
 
   for (const b of base.vendors) {
     const vendor = getVendor(b.id);
@@ -354,6 +401,11 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
       }
       if (seen.has(id)) continue;
       seen.add(id);
+      const availability =
+        kind === "journal" && id.startsWith("doi:") && fetchabilityIndex
+          ? assessDoiAvailability(id, grade, fetchabilityIndex, r.oaEvidence ?? [])
+          : undefined;
+      if (availability) fetchable = gradeForEvidence(availability);
       rows.push({
         id,
         source: b.id,
@@ -362,6 +414,8 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
         url: r.url,
         snippet: r.snippet,
         fetchable,
+        ...(r.discoveredBy?.length ? { discoveredBy: r.discoveredBy } : {}),
+        ...(availability ? { availability } : {}),
       });
     }
 
@@ -372,6 +426,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
       searchUrl: b.searchUrl,
       ...(effectiveQuery ? { query: effectiveQuery } : {}),
       count: rows.length,
+      ...(b.providers ? { providers: b.providers } : {}),
       ...(b.error ? { error: b.error } : {}),
     });
     results.push(...rows);
@@ -424,6 +479,21 @@ const FETCHABLE_LABEL: Record<Fetchability, string> = {
   none: "links-only",
 };
 
+function resultFetchabilityLabel(result: UnifiedResult): string {
+  const evidence = result.availability;
+  if (!evidence) return FETCHABLE_LABEL[result.fetchable];
+  if (evidence.confidence === "verified") {
+    const day = evidence.checkedAt?.slice(0, 10) ?? "unknown date";
+    const tier = evidence.retrievalTier ? ` · ${evidence.retrievalTier}` : "";
+    return `${evidence.availability} (CI ${day}${tier})`;
+  }
+  if (evidence.confidence === "metadata") {
+    const providers = [...new Set((evidence.signals ?? []).map((signal) => signal.split(":")[0]))];
+    return `likely-fetchable (current ${providers.join("+") || "OA"} metadata)`;
+  }
+  return `${FETCHABLE_LABEL[result.fetchable]} (journal prior; DOI untested)`;
+}
+
 /** Render a UnifiedResponse as compact, model-friendly markdown with ids. */
 export function renderSearch(resp: UnifiedResponse): string {
   if (!resp.query) return "No query provided.";
@@ -444,6 +514,11 @@ export function renderSearch(resp: UnifiedResponse): string {
     lines.push(`## ${s.name} _(${s.kind})_`);
     if (s.query) lines.push(`Query: \`${s.query}\``);
     if (s.searchUrl) lines.push(`Search page: ${s.searchUrl}`);
+    if (s.providers) {
+      lines.push(
+        `Backends: ${s.providers.map((p) => `${p.id}=${p.status}(${p.count})`).join(" · ")}`,
+      );
+    }
     if (rs.length === 0) {
       lines.push(`_No extractable results${s.error ? ` (${s.error})` : ""}._`, "");
       continue;
@@ -451,7 +526,7 @@ export function renderSearch(resp: UnifiedResponse): string {
     for (const r of rs) {
       lines.push(`- ${r.url ? `[${r.title}](${r.url})` : r.title}`);
       lines.push(
-        `  \`${r.id}\` · ${FETCHABLE_LABEL[r.fetchable]}` +
+        `  \`${r.id}\` · ${resultFetchabilityLabel(r)}` +
           `${r.snippet ? ` — ${r.snippet}` : ""}`,
       );
     }
@@ -461,9 +536,9 @@ export function renderSearch(resp: UnifiedResponse): string {
   lines.push(
     `_${resp.results.length} result${resp.results.length === 1 ? "" : "s"} across ` +
       `${resp.sources.length} source${resp.sources.length === 1 ? "" : "s"}. ` +
-      "Call `fetch` with a result's id to read it. `links-only` results can't be " +
-      "retrieved — open their url instead; `may-not-fetch` ones are worth trying " +
-      "but can come back as a link._",
+      "Call `fetch` with a result's id to read it. CI-verified labels are exact while fresh; " +
+      "metadata labels are predictions; journal-prior labels mean that DOI has not been tested. " +
+      "`links-only` results should be opened directly._",
   );
   return lines.join("\n");
 }

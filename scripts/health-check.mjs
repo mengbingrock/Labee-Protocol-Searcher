@@ -20,7 +20,9 @@
 // tell "always works" from "usually works". This script only reports what it
 // measured and flags *hard contradictions* (a source graded `full` that refused
 // the request, or one graded `none` that extracted fine), which are the cases
-// where a human should go re-grade the source.
+// where a human should go re-grade the source. Exact per-DOI outcomes are a
+// different layer: they are timestamped in fetchability-index.json and can
+// safely override that broad prior while fresh.
 
 import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
@@ -31,6 +33,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = resolve(ROOT, "dist/index.mjs");
 const README = resolve(ROOT, "README.md");
 const HISTORY = resolve(ROOT, "health-history.jsonl");
+const FETCHABILITY_INDEX = resolve(ROOT, "fetchability-index.json");
 const BEGIN = "<!-- HEALTH:BEGIN -->";
 const END = "<!-- HEALTH:END -->";
 // How many days the README table shows. The file keeps every run forever — this
@@ -139,6 +142,28 @@ function tierOf(text) {
   return m ? `${m[1]} extraction` : "";
 }
 
+function normalizeDoi(value) {
+  let doi = String(value || "").trim().replace(/^doi:/i, "");
+  doi = doi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "");
+  try {
+    doi = decodeURIComponent(doi);
+  } catch {
+    // The shape check below rejects malformed identifiers.
+  }
+  doi = doi.trim().replace(/[\s.,;]+$/, "").toLowerCase();
+  return /^10\.\d{4,9}\/\S+$/.test(doi) ? doi : "";
+}
+
+function contentOfStatus(status) {
+  if (status === "ok") return "full-text";
+  if (status === "oa-link") return "open-link";
+  if (status === "abstract-only" || status === "no-open-fulltext") return "abstract";
+  if (status === "not-found" || status === "not-fetchable" || status === "bad-id") {
+    return "unavailable";
+  }
+  return "unknown";
+}
+
 const OK = "✅";
 const WARN = "⚠️";
 const BAD = "❌";
@@ -181,14 +206,53 @@ function probeProviders() {
   return mapLimit(probes, CONCURRENCY, (p) => probeProvider(p.id, p.chain, p.env, p.source));
 }
 
+/** Fetch every unique DOI returned by the journal sweep, not just one per journal. */
+async function probeDoiResults(results) {
+  const unique = new Map();
+  for (const result of results ?? []) {
+    if (result.kind !== "article") continue;
+    const doi = normalizeDoi(result.id);
+    if (!doi) continue;
+    const previous = unique.get(doi);
+    if (!previous) unique.set(doi, result);
+    else {
+      previous.discoveredBy = [
+        ...new Set([...(previous.discoveredBy ?? []), ...(result.discoveredBy ?? [])]),
+      ];
+    }
+  }
+
+  return mapLimit([...unique.entries()], Math.min(CONCURRENCY, 3), async ([doi, result]) => {
+    const { stdout, stderr } = await withRetry(
+      () => cli(["--fetch", `doi:${doi}`]),
+      (row) => !row.stdout || ["error", "no-status"].includes(statusOf(row.stdout)),
+    );
+    const status = stdout ? statusOf(stdout) : "error";
+    return {
+      doi,
+      status,
+      content: contentOfStatus(status),
+      checkedAt: new Date().toISOString(),
+      source: result.source,
+      title: result.title,
+      retrievalTier: tierOf(stdout),
+      discoveredBy: [...new Set(result.discoveredBy ?? [])],
+      ...(stderr && !stdout ? { error: stderr } : {}),
+    };
+  });
+}
+
 /**
- * One search across every source, then one `fetch` of each source's top result.
- * The search half measures reach; the fetch half measures whether the declared
- * grade still matches reality.
+ * One search across every source, then fetch every unique journal DOI plus the
+ * top non-DOI result from each remaining source. The search half measures reach;
+ * the fetch half feeds both source health and the exact DOI index.
  */
 async function probeSources(declared) {
   const { json, stderr } = await search(["--query", QUERY, "--limit", "3"]);
-  if (!json) return { rows: [], searchError: stderr };
+  if (!json) return { rows: [], searchError: stderr, doiFetchability: [] };
+
+  const doiFetchability = await probeDoiResults(json.results ?? []);
+  const doiById = new Map(doiFetchability.map((row) => [`doi:${row.doi}`, row]));
 
   const rows = await mapLimit(json.sources ?? [], CONCURRENCY, async (bucket) => {
     const top = (json.results ?? []).find((r) => r.source === bucket.id);
@@ -204,14 +268,20 @@ async function probeSources(declared) {
       probedId: top?.id ?? "",
     };
     if (top) {
-      // Retry a hard refusal once: `not-fetchable` is what drives a drift
-      // warning, so it should not rest on a single request.
-      const { stdout, stderr: ferr } = await withRetry(
-        () => cli(["--fetch", top.id]),
-        (r) => !r.stdout || statusOf(r.stdout) === "not-fetchable",
-      );
-      row.fetchStatus = stdout ? statusOf(stdout) : `error: ${ferr}`;
-      row.tier = tierOf(stdout);
+      const doiObservation = doiById.get(top.id.toLowerCase());
+      if (doiObservation) {
+        row.fetchStatus = doiObservation.status;
+        row.tier = doiObservation.retrievalTier;
+      } else {
+        // Retry a hard refusal once: `not-fetchable` is what drives a drift
+        // warning, so it should not rest on a single request.
+        const { stdout, stderr: ferr } = await withRetry(
+          () => cli(["--fetch", top.id]),
+          (r) => !r.stdout || statusOf(r.stdout) === "not-fetchable",
+        );
+        row.fetchStatus = stdout ? statusOf(stdout) : `error: ${ferr}`;
+        row.tier = tierOf(stdout);
+      }
     }
     row.drift = driftOf(row);
     return row;
@@ -247,7 +317,7 @@ async function probeSources(declared) {
   rrow.drift = driftOf(rrow);
   rows.push(rrow);
 
-  return { rows, searchError: "" };
+  return { rows, searchError: "", doiFetchability };
 }
 
 /**
@@ -302,6 +372,8 @@ export function summarize(report) {
     sourcesWithHits: sources.filter((s) => s.count > 0).length,
     sourcesProbed: sources.length,
     fetchOk: sources.filter((s) => s.fetchStatus === "ok").length,
+    doisTested: report.doiFetchability?.length ?? 0,
+    doisWithFullText: (report.doiFetchability ?? []).filter((row) => row.status === "ok").length,
     drift: sources.filter((s) => s.drift).map((s) => s.id),
     sweepFailed: Boolean(report.searchError),
   };
@@ -390,7 +462,7 @@ function renderHistory(records) {
 }
 
 function renderBlock(report, history = []) {
-  const { generatedAt, query, enzyme, providers, sources, searchError } = report;
+  const { generatedAt, query, enzyme, providers, sources, searchError, doiFetchability = [] } = report;
   const drifted = sources.filter((s) => s.drift);
   const downBackends = providers.filter((p) => p.state === "down");
 
@@ -444,6 +516,12 @@ function renderBlock(report, history = []) {
   }
   lines.push("");
   lines.push(
+    `**Per-DOI retrieval:** ${doiFetchability.filter((row) => row.status === "ok").length}/` +
+      `${doiFetchability.length} returned full text. Exact observations are published in ` +
+      "[`fetchability-index.json`](fetchability-index.json) and override journal-level priors while fresh.",
+  );
+  lines.push("");
+  lines.push(
     "_A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. " +
       "Every ❌ above is a second failed attempt — probes retry once before being recorded as down._",
   );
@@ -475,12 +553,61 @@ async function readHistory() {
   }
 }
 
+async function readFetchabilityIndex() {
+  try {
+    const parsed = JSON.parse(await readFile(FETCHABILITY_INDEX, "utf8"));
+    return parsed && parsed.schemaVersion === 1 && parsed.dois && typeof parsed.dois === "object"
+      ? parsed
+      : { schemaVersion: 1, generatedAt: new Date(0).toISOString(), dois: {} };
+  } catch {
+    return { schemaVersion: 1, generatedAt: new Date(0).toISOString(), dois: {} };
+  }
+}
+
+/** Merge today's observations, expire old uncertainty, and bound repository growth. */
+export function buildFetchabilityIndex(
+  previous,
+  observations,
+  generatedAt,
+  { retentionDays = 90, maxEntries = 2_000 } = {},
+) {
+  const cutoff = Date.parse(generatedAt) - retentionDays * 86_400_000;
+  const merged = new Map();
+  for (const [rawDoi, row] of Object.entries(previous?.dois ?? {})) {
+    const doi = normalizeDoi(rawDoi);
+    if (!doi || !row || typeof row !== "object") continue;
+    const checked = Date.parse(row.checkedAt);
+    if (!Number.isFinite(checked) || checked < cutoff) continue;
+    merged.set(doi, row);
+  }
+  for (const row of observations ?? []) {
+    const doi = normalizeDoi(row.doi);
+    if (!doi || typeof row.checkedAt !== "string") continue;
+    merged.set(doi, {
+      status: row.status,
+      checkedAt: row.checkedAt,
+      ...(row.source ? { source: row.source } : {}),
+      ...(row.title ? { title: row.title } : {}),
+      ...(row.retrievalTier ? { retrievalTier: row.retrievalTier } : {}),
+      ...(row.discoveredBy?.length ? { discoveredBy: [...new Set(row.discoveredBy)] } : {}),
+    });
+  }
+  const newest = [...merged.entries()]
+    .sort((a, b) => Date.parse(b[1].checkedAt) - Date.parse(a[1].checkedAt))
+    .slice(0, maxEntries)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return { schemaVersion: 1, generatedAt, dois: Object.fromEntries(newest) };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const write = argv.includes("--write");
   const recordHistory = write && !argv.includes("--no-history");
   const jsonOutIdx = argv.indexOf("--json-out");
   const jsonOut = jsonOutIdx === -1 ? "" : argv[jsonOutIdx + 1];
+  const fetchabilityOutIdx = argv.indexOf("--fetchability-out");
+  const fetchabilityOut =
+    fetchabilityOutIdx === -1 ? (write ? FETCHABILITY_INDEX : "") : argv[fetchabilityOutIdx + 1];
 
   const declared = await declaredGrades();
   if (declared.size === 0) {
@@ -490,7 +617,7 @@ async function main() {
   }
 
   const providers = await probeProviders();
-  const { rows: sources, searchError } = await probeSources(declared);
+  const { rows: sources, searchError, doiFetchability } = await probeSources(declared);
 
   const report = {
     // Minute precision. This line changes on every run by design — a "last
@@ -503,6 +630,7 @@ async function main() {
     providers,
     sources,
     searchError,
+    doiFetchability,
   };
 
   // Read the log first so a dry run still prints the real history, then record
@@ -512,6 +640,11 @@ async function main() {
   const block = renderBlock(report, history);
 
   if (jsonOut) await writeFile(jsonOut, JSON.stringify(report, null, 2) + "\n");
+  if (fetchabilityOut) {
+    const previousIndex = await readFetchabilityIndex();
+    const nextIndex = buildFetchabilityIndex(previousIndex, doiFetchability, report.generatedAt);
+    await writeFile(fetchabilityOut, JSON.stringify(nextIndex, null, 2) + "\n");
+  }
 
   if (!write) {
     process.stdout.write(block + "\n");
@@ -541,7 +674,7 @@ export function spliceBlock(readme, block) {
   return readme.slice(0, start + BEGIN.length) + "\n" + block + "\n" + readme.slice(end);
 }
 
-export { statusOf, tierOf, driftOf, renderBlock, renderHistory };
+export { statusOf, tierOf, driftOf, renderBlock, renderHistory, normalizeDoi, contentOfStatus };
 
 // Only run when invoked as a script, so the helpers above stay importable.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
