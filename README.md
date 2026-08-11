@@ -106,7 +106,7 @@ broke overnight from one that has been down for a fortnight, and only the second
 is a reason to re-route a chain.
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-11T06:06Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-11T18:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 ❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
@@ -121,17 +121,17 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
-| `duckduckgo` | web | ❌ search returned HTTP 202 (via duckduckgo) |
+| `duckduckgo` | web | ❌ duckduckgo: search returned HTTP 202 (via duckduckgo) |
 
 **Sources**
 
 | Source | Declared `fetch` | Search hits | Top result `fetch` |
 | --- | --- | --- | --- |
-| `star-protocols` | ✅ full | ✅ 3 | ✅ `ok` · Europe PMC |
-| `nature-protocols` | ⚠️ partial | ✅ 3 | ⚠️ `abstract-only` · Europe PMC abstract |
-| `jove` | ⚠️ partial | ✅ 2 | ✅ `ok` · NCBI author manuscript |
-| `bio-protocol` | ✅ full | ✅ 3 | ✅ `ok` · Europe PMC |
-| `current-protocols` | ✅ full | ✅ 3 | ⚠️ `abstract-only` · Europe PMC abstract |
+| `star-protocols` | ✅ full | ✅ 12 | ✅ `ok` · Europe PMC |
+| `nature-protocols` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
+| `jove` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
+| `bio-protocol` | ✅ full | ✅ 9 | ✅ `ok` · Europe PMC |
+| `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
 | `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
 | `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
@@ -143,6 +143,8 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `promega` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
+
+**Per-DOI retrieval:** 24/47 returned full text. Exact observations are published in [`fetchability-index.json`](fetchability-index.json) and override journal-level priors while fresh.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
