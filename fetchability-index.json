@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-11T18:48Z",
+  "generatedAt": "2026-08-12T06:44Z",
   "dois": {
     "10.1002/cpz1.1125": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:46.685Z",
+      "checkedAt": "2026-08-12T06:44:31.443Z",
       "source": "current-protocols",
       "title": "A Cost‐Effective Approach for Single‐Stranded DNA Amplification Using Primer‐Blocked Asymmetric PCR",
       "retrievalTier": "Unpaywall",
@@ -14,7 +14,7 @@
     },
     "10.1002/cpz1.159": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:46.821Z",
+      "checkedAt": "2026-08-12T06:44:31.603Z",
       "source": "current-protocols",
       "title": "Production of Structured RNA Fragments by In Vitro Transcription and HPLC Purification",
       "retrievalTier": "Unpaywall",
@@ -24,7 +24,7 @@
     },
     "10.1002/cpz1.289": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:44.157Z",
+      "checkedAt": "2026-08-12T06:44:29.219Z",
       "source": "current-protocols",
       "title": "An Efficient Method for DNA Purification‐Free PCR from Plant Tissue",
       "retrievalTier": "Europe PMC abstract",
@@ -35,7 +35,7 @@
     },
     "10.1002/cpz1.70327": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:47.458Z",
+      "checkedAt": "2026-08-12T06:44:32.164Z",
       "source": "current-protocols",
       "title": "A Novel Cell-Based PCR Method for Accurate Characterization of African Trypanosomes",
       "retrievalTier": "Europe PMC abstract",
@@ -45,7 +45,7 @@
     },
     "10.1002/cpz1.70357": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:45.936Z",
+      "checkedAt": "2026-08-12T06:44:30.846Z",
       "source": "current-protocols",
       "title": "Affordable CRISPR RNP-Based Genome Editing in Euglena gracilis.",
       "retrievalTier": "Europe PMC",
@@ -55,7 +55,7 @@
     },
     "10.1002/cpz1.70358": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:46.758Z",
+      "checkedAt": "2026-08-12T06:44:32.033Z",
       "source": "current-protocols",
       "title": "Engineering, Expression, Purification, and Application of Glycosaminoglycan-Specific Antibodies.",
       "retrievalTier": "Europe PMC",
@@ -65,7 +65,7 @@
     },
     "10.1002/cpz1.70406": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:47.429Z",
+      "checkedAt": "2026-08-12T06:44:32.004Z",
       "source": "current-protocols",
       "title": "Streamlined In Vitro Transcription for Generating Self-Amplifying RNA With Modified Nucleotides",
       "retrievalTier": "Europe PMC abstract",
@@ -75,7 +75,7 @@
     },
     "10.1002/cpz1.70422": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:46.020Z",
+      "checkedAt": "2026-08-12T06:44:30.920Z",
       "source": "current-protocols",
       "title": "An Optimized and Improved Protocol for Efficient Isolation of Extracellular RNA from Human Serum.",
       "retrievalTier": "Europe PMC abstract",
@@ -86,7 +86,7 @@
     },
     "10.1002/cpz1.921": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:45.126Z",
+      "checkedAt": "2026-08-12T06:44:30.507Z",
       "source": "current-protocols",
       "title": "Purification of Mouse Embryonic Fibroblasts (MEFs)",
       "retrievalTier": "Unpaywall",
@@ -96,7 +96,7 @@
     },
     "10.1002/cpz1.964": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:44.892Z",
+      "checkedAt": "2026-08-12T06:44:30.028Z",
       "source": "current-protocols",
       "title": "Primary Astrocytes Purification and Immortalization",
       "retrievalTier": "Europe PMC abstract",
@@ -106,7 +106,7 @@
     },
     "10.1016/j.xpro.2019.100011": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:29.817Z",
+      "checkedAt": "2026-08-12T06:44:18.005Z",
       "source": "star-protocols",
       "title": "Purification of Affinity Tag-free Recombinant Tubulin from Insect Cells",
       "retrievalTier": "Europe PMC",
@@ -116,7 +116,7 @@
     },
     "10.1016/j.xpro.2021.100378": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:26.064Z",
+      "checkedAt": "2026-08-12T06:44:15.183Z",
       "source": "star-protocols",
       "title": "Purification of micronuclei from cultured cells by flow cytometry",
       "retrievalTier": "Europe PMC",
@@ -126,7 +126,7 @@
     },
     "10.1016/j.xpro.2022.102036": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:25.921Z",
+      "checkedAt": "2026-08-12T06:44:15.277Z",
       "source": "star-protocols",
       "title": "Purification of hetero-oligomeric protein variants using a modified tandem affinity purification approach",
       "retrievalTier": "Europe PMC",
@@ -136,7 +136,7 @@
     },
     "10.1016/j.xpro.2022.102037": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:29.380Z",
+      "checkedAt": "2026-08-12T06:44:18.046Z",
       "source": "star-protocols",
       "title": "Protocol to access unknown flanking DNA sequences using Wristwatch-PCR for genome-walking",
       "retrievalTier": "Europe PMC",
@@ -146,7 +146,7 @@
     },
     "10.1016/j.xpro.2024.102864": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:29.606Z",
+      "checkedAt": "2026-08-12T06:44:17.929Z",
       "source": "star-protocols",
       "title": "Protocol to retrieve unknown flanking DNA sequences using semi-site-specific PCR-based genome walking",
       "retrievalTier": "Europe PMC",
@@ -156,7 +156,7 @@
     },
     "10.1016/j.xpro.2024.103468": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:25.880Z",
+      "checkedAt": "2026-08-12T06:44:15.120Z",
       "source": "star-protocols",
       "title": "Protocol to culture Leishmania protozoans for lipophosphoglycan extraction and purification",
       "retrievalTier": "Europe PMC",
@@ -166,7 +166,7 @@
     },
     "10.1016/j.xpro.2025.104220": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:31.680Z",
+      "checkedAt": "2026-08-12T06:44:19.225Z",
       "source": "star-protocols",
       "title": "Protocol to clone unknown flanking genomic region using SWPOP-PCR for genome walking",
       "retrievalTier": "Europe PMC",
@@ -176,7 +176,7 @@
     },
     "10.1016/j.xpro.2026.104376": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:31.659Z",
+      "checkedAt": "2026-08-12T06:44:19.074Z",
       "source": "star-protocols",
       "title": "Protocol for isolation of total RNA from mouse whole cochlea using organic solvents",
       "retrievalTier": "Europe PMC",
@@ -186,7 +186,7 @@
     },
     "10.1016/j.xpro.2026.104513": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:27.880Z",
+      "checkedAt": "2026-08-12T06:44:16.717Z",
       "source": "star-protocols",
       "title": "Protocol for the genome-wide identification of intrinsic transcription factor binding motifs by mammalian-optimized pull-down sequencing.",
       "retrievalTier": "Europe PMC",
@@ -196,7 +196,7 @@
     },
     "10.1016/j.xpro.2026.104540": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:27.979Z",
+      "checkedAt": "2026-08-12T06:44:16.553Z",
       "source": "star-protocols",
       "title": "Protocol for total RNA sequencing analysis of extracellular RNA from biofluids.",
       "retrievalTier": "Europe PMC",
@@ -206,7 +206,7 @@
     },
     "10.1016/j.xpro.2026.104624": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:27.907Z",
+      "checkedAt": "2026-08-12T06:44:16.714Z",
       "source": "star-protocols",
       "title": "Protocol for massively parallel RNA assay combined with immunoprecipitation for high-throughput analysis of RNA-protein interactions in cells.",
       "retrievalTier": "Europe PMC",
@@ -216,7 +216,7 @@
     },
     "10.1016/j.xpro.2026.104765": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:31.078Z",
+      "checkedAt": "2026-08-12T06:44:19.132Z",
       "source": "star-protocols",
       "title": "Protocol for high-resolution multiplexed sequencing of single-cell full-length transcriptome with CBTi-seq",
       "retrievalTier": "Unpaywall",
@@ -226,7 +226,7 @@
     },
     "10.1038/nprot.2006.103": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:35.301Z",
+      "checkedAt": "2026-08-12T06:44:21.897Z",
       "source": "nature-protocols",
       "title": "PCR-based accurate synthesis of long DNA sequences",
       "retrievalTier": "Europe PMC abstract",
@@ -236,7 +236,7 @@
     },
     "10.1038/nprot.2006.371": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:32.838Z",
+      "checkedAt": "2026-08-12T06:44:19.858Z",
       "source": "nature-protocols",
       "title": "An optimized protocol for protein purification in cultured mammalian cells using a tandem affinity purification approach",
       "retrievalTier": "Europe PMC abstract",
@@ -246,7 +246,7 @@
     },
     "10.1038/nprot.2006.405": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:34.377Z",
+      "checkedAt": "2026-08-12T06:44:21.796Z",
       "source": "nature-protocols",
       "title": "Fusion PCR and gene targeting in Aspergillus nidulans",
       "retrievalTier": "Europe PMC abstract",
@@ -256,7 +256,7 @@
     },
     "10.1038/nprot.2007.247": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:37.336Z",
+      "checkedAt": "2026-08-12T06:44:23.353Z",
       "source": "nature-protocols",
       "title": "Ancient DNA extraction from bones and teeth",
       "retrievalTier": "Unpaywall",
@@ -266,7 +266,7 @@
     },
     "10.1038/nprot.2008.112": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:32.877Z",
+      "checkedAt": "2026-08-12T06:44:19.768Z",
       "source": "nature-protocols",
       "title": "PCR-amplification of GC-rich regions: 'slowdown PCR'",
       "retrievalTier": "Europe PMC abstract",
@@ -276,7 +276,7 @@
     },
     "10.1038/nprot.2008.133": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:31.785Z",
+      "checkedAt": "2026-08-12T06:44:19.757Z",
       "source": "nature-protocols",
       "title": "Touchdown PCR for increased specificity and sensitivity in PCR amplification",
       "retrievalTier": "Europe PMC abstract",
@@ -286,7 +286,7 @@
     },
     "10.1038/nprot.2017.006": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:37.125Z",
+      "checkedAt": "2026-08-12T06:44:23.433Z",
       "source": "nature-protocols",
       "title": "Simple multiplexed PCR-based barcoding of DNA for ultrasensitive mutation detection by next-generation sequencing",
       "retrievalTier": "Europe PMC abstract",
@@ -296,7 +296,7 @@
     },
     "10.1038/s41596-020-00453-6": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:36.117Z",
+      "checkedAt": "2026-08-12T06:44:22.525Z",
       "source": "nature-protocols",
       "title": "Identifying genome-wide off-target sites of CRISPR RNA-guided nucleases and deaminases with Digenome-seq",
       "retrievalTier": "Europe PMC abstract",
@@ -306,7 +306,7 @@
     },
     "10.1038/s41596-025-01224-x": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:37.092Z",
+      "checkedAt": "2026-08-12T06:44:23.197Z",
       "source": "nature-protocols",
       "title": "Targeted isolation of H(2)-dependent methylotrophic methanogens by a cocktail approach",
       "retrievalTier": "Unpaywall",
@@ -316,7 +316,7 @@
     },
     "10.1038/s41596-025-01285-y": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:34.595Z",
+      "checkedAt": "2026-08-12T06:44:21.185Z",
       "source": "nature-protocols",
       "title": "Profiling active RNA polymerase II transcription start sites from total RNA by capped small RNA sequencing (csRNA-seq).",
       "retrievalTier": "NCBI author manuscript",
@@ -326,7 +326,7 @@
     },
     "10.1038/s41596-025-01306-w": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:34.652Z",
+      "checkedAt": "2026-08-12T06:44:21.289Z",
       "source": "nature-protocols",
       "title": "Conjugation of hydrophobic drugs to motile pRNA 4WJ nanoparticles for spontaneous tumor targeting and undetectable toxicity.",
       "retrievalTier": "NCBI author manuscript",
@@ -336,7 +336,7 @@
     },
     "10.1038/s41596-025-01322-w": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:33.574Z",
+      "checkedAt": "2026-08-12T06:44:21.234Z",
       "source": "nature-protocols",
       "title": "Multichannel genomic recording of biological information with ENGRAM.",
       "retrievalTier": "Europe PMC",
@@ -346,7 +346,7 @@
     },
     "10.21769/bioprotoc.1533": {
       "status": "not-found",
-      "checkedAt": "2026-08-11T18:48:41.668Z",
+      "checkedAt": "2026-08-12T06:44:27.331Z",
       "source": "bio-protocol",
       "title": "Circular RT-PCR Assay Using Arabidopsis Samples",
       "discoveredBy": [
@@ -355,7 +355,7 @@
     },
     "10.21769/bioprotoc.2829": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:41.976Z",
+      "checkedAt": "2026-08-12T06:44:29.612Z",
       "source": "bio-protocol",
       "title": "Purification of Total RNA from DSS-treated Murine Tissue via Lithium Chloride Precipitation",
       "retrievalTier": "Europe PMC abstract",
@@ -365,7 +365,7 @@
     },
     "10.21769/bioprotoc.3328": {
       "status": "abstract-only",
-      "checkedAt": "2026-08-11T18:48:44.275Z",
+      "checkedAt": "2026-08-12T06:44:27.570Z",
       "source": "bio-protocol",
       "title": "Cell Type-specific mRNA Purification in Caenorhabditis elegans via Translating Ribosome Affinity Purification",
       "retrievalTier": "Europe PMC abstract",
@@ -375,7 +375,7 @@
     },
     "10.21769/bioprotoc.5382": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:44.441Z",
+      "checkedAt": "2026-08-12T06:44:29.554Z",
       "source": "bio-protocol",
       "title": "Thermus thermophilus CRISPR Cas6 Heterologous Expression and Purification",
       "retrievalTier": "Europe PMC",
@@ -385,7 +385,7 @@
     },
     "10.21769/bioprotoc.5516": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:43.319Z",
+      "checkedAt": "2026-08-12T06:44:28.677Z",
       "source": "bio-protocol",
       "title": "Analyzing the Translatome of Lymphatic and Venous Endothelial Cells In Vivo via Translating Ribosome Affinity Purification (TRAP)",
       "retrievalTier": "Europe PMC",
@@ -395,7 +395,7 @@
     },
     "10.21769/bioprotoc.5547": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:42.961Z",
+      "checkedAt": "2026-08-12T06:44:28.425Z",
       "source": "bio-protocol",
       "title": "Plasmid DNA Purification Using Filterprep With an Optional Endotoxin Removal Step",
       "retrievalTier": "Europe PMC",
@@ -405,7 +405,7 @@
     },
     "10.21769/bioprotoc.5682": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:40.090Z",
+      "checkedAt": "2026-08-12T06:44:25.668Z",
       "source": "bio-protocol",
       "title": "Parallelised Cloning, Mammalian Cell Expression, and Purification of Nanobodies Identified by Phage Display.",
       "retrievalTier": "Europe PMC",
@@ -415,7 +415,7 @@
     },
     "10.21769/bioprotoc.5697": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:41.035Z",
+      "checkedAt": "2026-08-12T06:44:26.793Z",
       "source": "bio-protocol",
       "title": "Quantification of Spatial Patterns of Microtubule Transport by Kinesin-1 Head and Tail.",
       "retrievalTier": "Europe PMC",
@@ -425,7 +425,7 @@
     },
     "10.3791/30383": {
       "status": "not-found",
-      "checkedAt": "2026-08-11T18:48:37.770Z",
+      "checkedAt": "2026-08-12T06:44:23.969Z",
       "source": "jove",
       "title": "Agarose Gel Electrophoresis of DNA Amplicons Post PCR: A Method to Analyze Products of Multiplex PCR and Evaluate PCR Reaction Success",
       "discoveredBy": [
@@ -434,7 +434,7 @@
     },
     "10.3791/3912": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:38.578Z",
+      "checkedAt": "2026-08-12T06:44:24.455Z",
       "source": "jove",
       "title": "Chromatin Isolation by RNA Purification (ChIRP)",
       "retrievalTier": "Europe PMC",
@@ -444,7 +444,7 @@
     },
     "10.3791/51780": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:40.173Z",
+      "checkedAt": "2026-08-12T06:44:25.730Z",
       "source": "jove",
       "title": "Isolation, Identification, and Purification of Murine Thymic Epithelial Cells",
       "retrievalTier": "Unpaywall",
@@ -454,7 +454,7 @@
     },
     "10.3791/53208": {
       "status": "oa-link",
-      "checkedAt": "2026-08-11T18:48:39.596Z",
+      "checkedAt": "2026-08-12T06:44:25.728Z",
       "source": "jove",
       "title": "Purification of Mouse Brain Vessels",
       "retrievalTier": "Unpaywall",
@@ -464,7 +464,7 @@
     },
     "10.3791/61839": {
       "status": "ok",
-      "checkedAt": "2026-08-11T18:48:38.564Z",
+      "checkedAt": "2026-08-12T06:44:24.343Z",
       "source": "jove",
       "title": "PCR Mutagenesis, Cloning, Expression, Fast Protein Purification Protocols and Crystallization of the Wild Type and Mutant Forms of Tryptophan Synthase",
       "retrievalTier": "NCBI author manuscript",
