@@ -158,7 +158,7 @@ every day. The customer-facing summary from the latest run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-15T05:44Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-16T05:45Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 ❌ **1 backend not answering:** `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
@@ -181,7 +181,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | --- | --- | --- | --- |
 | `star-protocols` | ✅ full | ✅ 12 | ✅ `ok` · Europe PMC |
 | `nature-protocols` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
-| `jove` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
+| `jove` | ⚠️ partial | ✅ 3 | ✅ `ok` · Europe PMC |
 | `bio-protocol` | ✅ full | ✅ 9 | ✅ `ok` · Europe PMC |
 | `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
@@ -196,7 +196,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
-**Per-DOI retrieval:** 23/47 returned full text. Exact observations are published in [`fetchability-index.json`](fetchability-index.json) and override journal-level priors while fresh.
+**Per-DOI retrieval:** 22/45 returned full text. Exact observations are published in [`fetchability-index.json`](fetchability-index.json) and override journal-level priors while fresh.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -204,6 +204,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-16 | ⚠️ 6/7 | ✅ 16/16 | ⚠️ 11/16 | `duckduckgo` | — |
 | 2026-08-15 | ⚠️ 6/7 | ✅ 16/16 | ⚠️ 11/16 | `duckduckgo` | — |
 | 2026-08-14 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-13 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
