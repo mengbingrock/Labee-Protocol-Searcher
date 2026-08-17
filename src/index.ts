@@ -20,6 +20,7 @@ import { runHttpServer } from "./http.ts";
 import { search, renderSearch } from "./search.ts";
 import { fetchResource } from "./fetch.ts";
 import { VENDORS } from "./vendors.ts";
+import { describeNetworkContext, detectNetworkContext } from "./network-context.ts";
 import { deepSearchService } from "./agent/service.ts";
 
 interface CliArgs {
@@ -117,6 +118,24 @@ async function runCli(args: CliArgs): Promise<void> {
 
 const args = parseArgs(process.argv.slice(2));
 
+/**
+ * First step in every mode: establish what kind of network we are on. Entitlement
+ * to publisher content is decided by IP, so retrieval behaves differently from a
+ * university range than from a datacenter, and a caller reading the results
+ * deserves to know which one produced them. Never fatal — an unreachable
+ * detector resolves to "unknown".
+ */
+async function detectNetwork(): Promise<void> {
+  try {
+    const ctx = await detectNetworkContext();
+    process.stderr.write(`[labee-protocol-searcher] ${describeNetworkContext(ctx)}\n`);
+  } catch (err) {
+    process.stderr.write(
+      `[labee-protocol-searcher] network detection skipped: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  }
+}
+
 async function resumeAgentJobs(): Promise<void> {
   try {
     const ids = await deepSearchService().resumeIncompleteJobs();
@@ -127,15 +146,23 @@ async function resumeAgentJobs(): Promise<void> {
 }
 
 if (args.query !== undefined || args.fetchId !== undefined || args.listSources) {
-  runCli(args).catch((err) => {
-    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-  });
+  detectNetwork()
+    .then(() => runCli(args))
+    .catch((err) => {
+      process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    });
 } else if (args.http) {
-  resumeAgentJobs().then(() => runHttp(args)).catch((err) => {
-    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-  });
+  detectNetwork()
+    .then(() => resumeAgentJobs())
+    .then(() => runHttp(args))
+    .catch((err) => {
+      process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    });
 } else {
-  resumeAgentJobs().then(() => runMcpServer()).then(() => process.exit(0));
+  detectNetwork()
+    .then(() => resumeAgentJobs())
+    .then(() => runMcpServer())
+    .then(() => process.exit(0));
 }

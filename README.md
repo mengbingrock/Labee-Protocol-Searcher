@@ -20,7 +20,7 @@ support MCP.
 | --- | --- |
 | Protocols are scattered across journals, supplier sites, and databases. | One request searches all supported sources and presents the results together. |
 | Publisher and supplier search pages often block automation or hide results behind interactive pages. | Labee uses several independent discovery routes and keeps a direct source link when a page cannot be read automatically. |
-| A promising search result may lead to a paywall, an abstract, or a broken page. | Each paper is labeled with its latest known access result, so you know what your assistant can use before relying on it. |
+| A promising search result may lead to a paywall, an abstract, or a broken page. | Every result says what Labee expects to be readable, and every retrieval reports what it actually got — the two are never conflated. |
 | One literature index can miss an important paper or be temporarily unavailable. | Labee checks multiple scholarly indexes and combines their findings instead of stopping after the first successful search. |
 | Deep searches can become repetitive, lose progress, or stop after a temporary failure. | Labee can run a durable search that records progress, tries every available route, removes duplicates, and resumes after a restart. |
 | Restriction-enzyme details are difficult to extract from commercial product pages. | Labee reads the open REBASE record for recognition sites, cut positions, isoschizomers, methylation sensitivity, and suppliers. |
@@ -49,18 +49,42 @@ appear in one response. Duplicate papers found by several indexes are combined.
 Labee separates discovery from access. Finding a paper does not automatically
 mean its full text is available.
 
-| Label | What it means for you |
-| --- | --- |
-| **Verified full text** | Labee recently retrieved readable protocol content for this exact paper. |
-| **Verified abstract only** | The paper was found, but the latest check could retrieve only its abstract. |
-| **Open-access link** | A legal open copy was identified and linked. |
-| **Likely fetchable** | Current publisher or index information indicates that readable content should be available. |
-| **Untested** | Labee has not recently checked this exact paper; the journal’s usual availability is shown as guidance. |
-| **Link only** | The site does not allow automated reading, so Labee gives you the direct page instead. |
+Search results carry a prediction; `fetch` reports what actually happened.
 
-These observations are refreshed automatically. Successful full-text checks are
-kept longer, while negative results expire sooner because newly published papers
-may become available after indexing catches up.
+| Search label | What it means for you |
+| --- | --- |
+| **Likely fetchable** | An index reported an open-access copy for this paper during this search. |
+| **May not fetch** | Only the journal’s usual behaviour is known; this paper has not been tried. |
+| **Links only** | The site does not allow automated reading, so Labee gives you the direct page. |
+
+Every search label is a prediction, and says so. Labee deliberately keeps no
+shared record of past retrievals: whether a paper can be read depends on the
+network asking — an institutional address may reach content a datacenter cannot
+— so a claim like “verified full text” was only ever true for whoever measured
+it. Predictions are computed fresh for each search and shared with nobody.
+
+`fetch` then reports the outcome it actually got, as a machine-readable status:
+
+| `fetch` status | What you received |
+| --- | --- |
+| `ok` | Readable protocol content from an open-access source. |
+| `entitled-full-text` | The publisher’s own copy, read under your institution’s subscription. **Not open access** — that subscription’s terms govern what you may do with it. |
+| `display-only-full-text` | A PMC copy that is free to read but sits outside the Open Access Subset — the publisher granted display rights, not a redistribution licence. Read it; don’t republish it. |
+| `oa-link` | No machine-readable text, but a legal open copy was found and linked. |
+| `abstract-only` | Only the abstract is available; no open full text exists. |
+| `not-found` / `not-fetchable` | Not indexed, or the site refused automated reading. |
+
+### Network context
+
+Because entitlement is decided by IP, Labee checks once at startup whether it is
+running on an academic network and prints what it found. On such a network
+`fetch` will try the publisher’s own copy of a paywalled DOI before falling back
+to the abstract. Set `PROTOCOLS_ENTITLED_FETCH=off` to never attempt it, or
+`PROTOCOLS_NETWORK_DETECT=off` to skip the check altogether.
+
+Labee still bypasses no access control. The entitled path uses only the access
+your network already has, and it is labelled distinctly precisely so that
+subscription content is never mistaken for open content.
 
 ### Useful content, not just citations
 
@@ -196,7 +220,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
-**Per-DOI retrieval:** 24/47 returned full text. Exact observations are published in [`fetchability-index.json`](fetchability-index.json) and override journal-level priors while fresh.
+**Per-DOI retrieval:** 24/47 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -264,7 +288,8 @@ npm run test:agent:live -- --loops 1 --limit 1 --browser auto
 | Durable deep search | `src/agent/` |
 | MCP and hosted transport | `src/mcp.ts`, `src/http.ts` |
 | Daily reliability checks | `scripts/health-check.mjs`, `.github/workflows/health.yml` |
-| Per-paper access observations | `fetchability-index.json` |
+| Network context and entitlement | `src/network-context.ts` |
+| Cookie jar (identity-provider handshakes) | `src/cookies.ts` |
 
 </details>
 

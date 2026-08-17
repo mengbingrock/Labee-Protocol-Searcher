@@ -20,9 +20,10 @@
 // tell "always works" from "usually works". This script only reports what it
 // measured and flags *hard contradictions* (a source graded `full` that refused
 // the request, or one graded `none` that extracted fine), which are the cases
-// where a human should go re-grade the source. Exact per-DOI outcomes are a
-// different layer: they are timestamped in fetchability-index.json and can
-// safely override that broad prior while fresh.
+// where a human should go re-grade the source. Per-DOI outcomes are reported for
+// this run only and deliberately not persisted: an observation made here
+// describes what this network reached today, which is not a fact about anyone
+// else's network.
 
 import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
@@ -33,7 +34,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = resolve(ROOT, "dist/index.mjs");
 const README = resolve(ROOT, "README.md");
 const HISTORY = resolve(ROOT, "health-history.jsonl");
-const FETCHABILITY_INDEX = resolve(ROOT, "fetchability-index.json");
 const BEGIN = "<!-- HEALTH:BEGIN -->";
 const END = "<!-- HEALTH:END -->";
 // How many days the README table shows. The file keeps every run forever — this
@@ -517,8 +517,8 @@ function renderBlock(report, history = []) {
   lines.push("");
   lines.push(
     `**Per-DOI retrieval:** ${doiFetchability.filter((row) => row.status === "ok").length}/` +
-      `${doiFetchability.length} returned full text. Exact observations are published in ` +
-      "[`fetchability-index.json`](fetchability-index.json) and override journal-level priors while fresh.",
+      `${doiFetchability.length} returned full text in this run. Not persisted: the result ` +
+      "depends on the network the probe ran from, so it is reported, not published as a fact.",
   );
   lines.push("");
   lines.push(
@@ -553,51 +553,6 @@ async function readHistory() {
   }
 }
 
-async function readFetchabilityIndex() {
-  try {
-    const parsed = JSON.parse(await readFile(FETCHABILITY_INDEX, "utf8"));
-    return parsed && parsed.schemaVersion === 1 && parsed.dois && typeof parsed.dois === "object"
-      ? parsed
-      : { schemaVersion: 1, generatedAt: new Date(0).toISOString(), dois: {} };
-  } catch {
-    return { schemaVersion: 1, generatedAt: new Date(0).toISOString(), dois: {} };
-  }
-}
-
-/** Merge today's observations, expire old uncertainty, and bound repository growth. */
-export function buildFetchabilityIndex(
-  previous,
-  observations,
-  generatedAt,
-  { retentionDays = 90, maxEntries = 2_000 } = {},
-) {
-  const cutoff = Date.parse(generatedAt) - retentionDays * 86_400_000;
-  const merged = new Map();
-  for (const [rawDoi, row] of Object.entries(previous?.dois ?? {})) {
-    const doi = normalizeDoi(rawDoi);
-    if (!doi || !row || typeof row !== "object") continue;
-    const checked = Date.parse(row.checkedAt);
-    if (!Number.isFinite(checked) || checked < cutoff) continue;
-    merged.set(doi, row);
-  }
-  for (const row of observations ?? []) {
-    const doi = normalizeDoi(row.doi);
-    if (!doi || typeof row.checkedAt !== "string") continue;
-    merged.set(doi, {
-      status: row.status,
-      checkedAt: row.checkedAt,
-      ...(row.source ? { source: row.source } : {}),
-      ...(row.title ? { title: row.title } : {}),
-      ...(row.retrievalTier ? { retrievalTier: row.retrievalTier } : {}),
-      ...(row.discoveredBy?.length ? { discoveredBy: [...new Set(row.discoveredBy)] } : {}),
-    });
-  }
-  const newest = [...merged.entries()]
-    .sort((a, b) => Date.parse(b[1].checkedAt) - Date.parse(a[1].checkedAt))
-    .slice(0, maxEntries)
-    .sort(([a], [b]) => a.localeCompare(b));
-  return { schemaVersion: 1, generatedAt, dois: Object.fromEntries(newest) };
-}
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -605,9 +560,6 @@ async function main() {
   const recordHistory = write && !argv.includes("--no-history");
   const jsonOutIdx = argv.indexOf("--json-out");
   const jsonOut = jsonOutIdx === -1 ? "" : argv[jsonOutIdx + 1];
-  const fetchabilityOutIdx = argv.indexOf("--fetchability-out");
-  const fetchabilityOut =
-    fetchabilityOutIdx === -1 ? (write ? FETCHABILITY_INDEX : "") : argv[fetchabilityOutIdx + 1];
 
   const declared = await declaredGrades();
   if (declared.size === 0) {
@@ -640,12 +592,6 @@ async function main() {
   const block = renderBlock(report, history);
 
   if (jsonOut) await writeFile(jsonOut, JSON.stringify(report, null, 2) + "\n");
-  if (fetchabilityOut) {
-    const previousIndex = await readFetchabilityIndex();
-    const nextIndex = buildFetchabilityIndex(previousIndex, doiFetchability, report.generatedAt);
-    await writeFile(fetchabilityOut, JSON.stringify(nextIndex, null, 2) + "\n");
-  }
-
   if (!write) {
     process.stdout.write(block + "\n");
     return;

@@ -14,12 +14,7 @@ import { webSearch } from "./providers/registry.ts";
 import { searchJournal } from "./journals.ts";
 import { resolveVendors, getVendor, type Fetchability, type Vendor } from "./vendors.ts";
 import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
-import {
-  assessDoiAvailability,
-  loadFetchabilityIndex,
-  type DoiAvailabilityEvidence,
-  type FetchabilityIndex,
-} from "./fetchability-index.ts";
+import { assessDoiAvailability, type DoiAvailabilityEvidence } from "./availability.ts";
 
 export interface VendorResults {
   id: string;
@@ -295,17 +290,11 @@ export interface UnifiedOptions extends Omit<SearchOptions, "vendors"> {
   sources?: readonly string[];
   /** Force REBASE lookup mode when the query is enzyme-shaped. */
   by?: "name" | "site";
-  /** Inject a validated CI index (primarily for hermetic tests). */
-  fetchabilityIndex?: FetchabilityIndex;
 }
 
 function gradeForEvidence(evidence: DoiAvailabilityEvidence): Fetchability {
-  if (evidence.availability === "verified-full-text" || evidence.availability === "likely-fetchable") {
-    return "full";
-  }
-  if (evidence.availability === "verified-unavailable" || evidence.availability === "unlikely-fetchable") {
-    return "none";
-  }
+  if (evidence.availability === "likely-fetchable") return "full";
+  if (evidence.availability === "unlikely-fetchable") return "none";
   return "partial";
 }
 
@@ -357,13 +346,6 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
   const results: UnifiedResult[] = [];
   const sources: SourceStatus[] = [];
   let partial = base.partial;
-  const hasJournalResults = base.vendors.some(
-    (bucket) => getVendor(bucket.id)?.kind === "journal" && bucket.results.length > 0,
-  );
-  const fetchabilityIndex = hasJournalResults
-    ? opts.fetchabilityIndex ??
-      (await loadFetchabilityIndex({ allowRemote: opts.providerOpts?.fetchImpl === undefined }))
-    : undefined;
 
   for (const b of base.vendors) {
     const vendor = getVendor(b.id);
@@ -402,8 +384,8 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
       if (seen.has(id)) continue;
       seen.add(id);
       const availability =
-        kind === "journal" && id.startsWith("doi:") && fetchabilityIndex
-          ? assessDoiAvailability(id, grade, fetchabilityIndex, r.oaEvidence ?? [])
+        kind === "journal" && id.startsWith("doi:")
+          ? assessDoiAvailability(grade, r.oaEvidence ?? [])
           : undefined;
       if (availability) fetchable = gradeForEvidence(availability);
       rows.push({
@@ -482,11 +464,6 @@ const FETCHABLE_LABEL: Record<Fetchability, string> = {
 function resultFetchabilityLabel(result: UnifiedResult): string {
   const evidence = result.availability;
   if (!evidence) return FETCHABLE_LABEL[result.fetchable];
-  if (evidence.confidence === "verified") {
-    const day = evidence.checkedAt?.slice(0, 10) ?? "unknown date";
-    const tier = evidence.retrievalTier ? ` · ${evidence.retrievalTier}` : "";
-    return `${evidence.availability} (CI ${day}${tier})`;
-  }
   if (evidence.confidence === "metadata") {
     const providers = [...new Set((evidence.signals ?? []).map((signal) => signal.split(":")[0]))];
     return `likely-fetchable (current ${providers.join("+") || "OA"} metadata)`;
@@ -536,8 +513,9 @@ export function renderSearch(resp: UnifiedResponse): string {
   lines.push(
     `_${resp.results.length} result${resp.results.length === 1 ? "" : "s"} across ` +
       `${resp.sources.length} source${resp.sources.length === 1 ? "" : "s"}. ` +
-      "Call `fetch` with a result's id to read it. CI-verified labels are exact while fresh; " +
-      "metadata labels are predictions; journal-prior labels mean that DOI has not been tested. " +
+      "Call `fetch` with a result's id to read it. Every label is a prediction, not an " +
+      "observation: metadata labels come from open-access signals this search just received; " +
+      "journal-prior labels mean only the journal's usual behaviour is known. " +
       "`links-only` results should be opened directly._",
   );
   return lines.join("\n");
