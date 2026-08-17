@@ -59,12 +59,12 @@ export function resolutionCandidates(result: UnifiedResult, fetchedText: string)
 }
 
 export function isVerifiedStatus(status: FetchStatus): boolean {
-  return status === "ok";
+  return status === "ok" || status === "entitled-full-text" || status === "display-only-full-text";
 }
 
 export function verificationFor(status: FetchStatus): "verified" | "partial" | "unresolved" | "blocked" {
-  if (status === "ok") return "verified";
-  if (status === "abstract-only" || status === "oa-link") return "partial";
+  if (isVerifiedStatus(status)) return "verified";
+  if (status === "abstract-only" || status === "oa-link" || status === "display-only-link") return "partial";
   if (status === "blocked" || status === "unsafe-url") return "blocked";
   return "unresolved";
 }
@@ -72,6 +72,9 @@ export function verificationFor(status: FetchStatus): "verified" | "partial" | "
 export function betterStatus(current: FetchStatus, candidate: FetchStatus): FetchStatus {
   const score: Record<FetchStatus, number> = {
     ok: 100,
+    "display-only-full-text": 95,
+    "entitled-full-text": 90,
+    "display-only-link": 75,
     "abstract-only": 80,
     "oa-link": 70,
     "no-open-fulltext": 50,

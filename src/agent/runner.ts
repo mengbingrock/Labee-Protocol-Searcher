@@ -144,7 +144,14 @@ async function recover(
 ): Promise<RecoveryResult> {
   let status = parseFetchStatus(nativeText);
   let route: AttemptRoute = "native-fetch";
-  let content = status === "ok" || status === "abstract-only" ? nativeText : undefined;
+  let content =
+    status === "ok" ||
+    status === "entitled-full-text" ||
+    status === "display-only-full-text" ||
+    status === "abstract-only"
+      ? nativeText
+      : undefined;
+  const nativeStatus = status;
   const attemptedUrls: string[] = [];
   if (isVerifiedStatus(status)) return { status, route, content, attemptedUrls };
 
@@ -164,6 +171,13 @@ async function recover(
           },
         });
       candidateStatus = parseFetchStatus(text);
+      if (
+        candidateStatus === "ok" &&
+        nativeStatus === "display-only-link" &&
+        /\/articles\/PMC\d+/i.test(candidate.url)
+      ) {
+        candidateStatus = "display-only-full-text";
+      }
     } catch (err) {
       candidateStatus = /unsafe-url/i.test(String(err)) ? "unsafe-url" : "error";
       text = err instanceof Error ? err.message : "candidate fetch failed";
@@ -184,7 +198,14 @@ async function recover(
     if (best !== status) {
       status = best;
       route = candidate.route;
-      if (candidateStatus === "ok" || candidateStatus === "abstract-only") content = text;
+      if (
+        candidateStatus === "ok" ||
+        candidateStatus === "entitled-full-text" ||
+        candidateStatus === "display-only-full-text" ||
+        candidateStatus === "abstract-only"
+      ) {
+        content = text;
+      }
     }
     if (isVerifiedStatus(status)) return { status, route, content, attemptedUrls };
   }
@@ -203,7 +224,15 @@ async function recover(
     return { status: betterStatus(status, "browser-unavailable"), route, content, attemptedUrls };
   }
 
-  const browserUrls = [...new Set([result.url, ...candidates.map((c) => c.url)].filter((x): x is string => Boolean(x)))];
+  const candidateUrls = candidates.map((candidate) => candidate.url);
+  // A display-only classification is tied to the public PMC deposit. Try that
+  // URL before the publisher DOI so a browser-readable copy keeps its correct
+  // rights label instead of being accidentally promoted to generic `ok`.
+  const browserOrder =
+    nativeStatus === "display-only-link"
+      ? [...candidateUrls, result.url]
+      : [result.url, ...candidateUrls];
+  const browserUrls = [...new Set(browserOrder.filter((url): url is string => Boolean(url)))];
   for (const url of browserUrls) {
     if (progress.browserPages >= spec.maxBrowserPages) break;
     progress.browserPages++;
@@ -215,7 +244,14 @@ async function recover(
       maxChars: 80_000,
       timeoutMs: 20_000,
     });
-    const browserStatus: FetchStatus = hit.status === "unavailable" ? "browser-unavailable" : hit.status;
+    const browserStatus: FetchStatus =
+      hit.status === "ok" &&
+      nativeStatus === "display-only-link" &&
+      /\/articles\/PMC\d+/i.test(url)
+        ? "display-only-full-text"
+        : hit.status === "unavailable"
+          ? "browser-unavailable"
+          : hit.status;
     await recordAttempt(deps.store, jobId, {
       ts: nowIso(deps), iteration, keyword, resultId: result.id, source: result.source,
       route: "browser-cdp", status: browserStatus, elapsedMs: Date.now() - started,
@@ -230,7 +266,12 @@ async function recover(
     if (best !== status) {
       status = best;
       route = "browser-cdp";
-      if (browserStatus === "ok") content = hit.text;
+      if (
+        browserStatus === "ok" ||
+        browserStatus === "display-only-full-text"
+      ) {
+        content = hit.text;
+      }
     }
     if (isVerifiedStatus(status)) break;
   }

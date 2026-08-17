@@ -70,8 +70,9 @@ it. Predictions are computed fresh for each search and shared with nobody.
 | `ok` | Readable protocol content from an open-access source. |
 | `entitled-full-text` | The publisher’s own copy, read under your institution’s subscription. **Not open access** — that subscription’s terms govern what you may do with it. |
 | `display-only-full-text` | A PMC copy that is free to read but sits outside the Open Access Subset — the publisher granted display rights, not a redistribution licence. Read it; don’t republish it. |
+| `display-only-link` | A free-to-read PMC copy exists, but its publisher has not licensed machine-readable redistribution; open the supplied PMC link in a browser. |
 | `oa-link` | No machine-readable text, but a legal open copy was found and linked. |
-| `abstract-only` | Only the abstract is available; no open full text exists. |
+| `abstract-only` | Only the abstract was retrieved; no public open full text was found at retrieval time. |
 | `not-found` / `not-fetchable` | Not indexed, or the site refused automated reading. |
 
 ### Network context

@@ -108,8 +108,9 @@ export const TOOLS = [
       "neb.com, sigmaaldrich.com, emdmillipore.com) refuse automated requests and return their link " +
       "instead — `search` grades each result so you know which to expect. Pass " +
       "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
-      "enzyme names also work. Every result ends with a `_status: …_` line (ok, abstract-only, " +
-      "no-open-fulltext, oa-link, not-fetchable, not-found, bad-id).",
+      "enzyme names also work. Every result ends with a `_status: …_` line (ok, entitled-full-text, " +
+      "display-only-full-text, display-only-link, abstract-only, no-open-fulltext, oa-link, " +
+      "not-fetchable, not-found, bad-id).",
     inputSchema: {
       type: "object",
       properties: {
