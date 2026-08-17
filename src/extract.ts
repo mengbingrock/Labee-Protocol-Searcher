@@ -10,8 +10,9 @@
 //          only pulled in when a PDF is actually fetched. A malformed/encrypted
 //          PDF just returns null and the caller falls back to the plain OA link.
 
-import { type ProviderOptions, decodeEntities, fetchWithRetry, stripTags, userAgent } from "./providers/types.ts";
-import { assertSafePublicUrl } from "./agent/url-policy.ts";
+import { type ProviderOptions, decodeEntities, stripTags, userAgent } from "./providers/types.ts";
+import { CookieJar, defaultUrlValidator, fetchFollowingWithCookies } from "./cookies.ts";
+import { type Entitlement, classifyEntitlement } from "./entitlement.ts";
 
 export type ExtractFormat = "html" | "xml" | "pdf" | "json";
 
@@ -186,65 +187,10 @@ function renderProtocolsIo(payload: unknown): string {
   return out.join("\n\n").trim();
 }
 
-/** Absorb a response's Set-Cookie headers into `jar` (last value wins). */
-function harvestCookies(res: Response, jar: Map<string, string>): void {
-  for (const raw of res.headers.getSetCookie?.() ?? []) {
-    const pair = raw.split(";", 1)[0]!.trim();
-    const eq = pair.indexOf("=");
-    if (eq > 0) jar.set(pair.slice(0, eq), pair.slice(eq + 1));
-  }
-}
-
-const MAX_REDIRECT_HOPS = 8;
-
 /**
- * Follow redirects by hand, carrying cookies between hops the way a browser
- * would. `fetch` has no cookie jar, so a site that gates content behind one
- * (idtdna.com bounces you through a country-selection page that sets `Country`)
- * redirects forever and fetch eventually throws.
- */
-async function fetchFollowingWithCookies(
-  doFetch: typeof fetch,
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-  validateUrl: (url: string) => Promise<void>,
-): Promise<Response> {
-  const jars = new Map<string, Map<string, string>>();
-  let current = url;
-  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
-    await validateUrl(current);
-    const host = new URL(current).hostname.toLowerCase();
-    const jar = jars.get(host) ?? new Map<string, string>();
-    jars.set(host, jar);
-    const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
-    const res = await fetchWithRetry(
-      doFetch,
-      current,
-      {
-        ...init,
-        redirect: "manual",
-        headers: {
-          ...(init.headers as Record<string, string>),
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-      },
-      timeoutMs,
-      { retries: 0 },
-    );
-    harvestCookies(res, jar);
-    if (res.status < 300 || res.status >= 400) return res;
-    const location = res.headers.get("location");
-    if (!location) return res;
-    current = new URL(location, current).toString();
-  }
-  throw new Error(`redirect count exceeded after ${MAX_REDIRECT_HOPS} hops`);
-}
-
-/**
- * Manual redirect handling is mandatory: automatic redirect following would
- * let a public URL bounce to loopback, a private network, or cloud metadata
- * before the destination policy could inspect the next hop.
+ * One jar per `extractOaContent` call, so the whole redirect chain — including
+ * a hop onto a sibling subdomain and back — shares cookies. See cookies.ts for
+ * why domain scoping rather than hostname keying is the load-bearing detail.
  */
 async function fetchAllowingCookieGate(
   doFetch: typeof fetch,
@@ -252,8 +198,9 @@ async function fetchAllowingCookieGate(
   init: RequestInit,
   timeoutMs: number,
   validateUrl: (url: string) => Promise<void>,
+  jar?: CookieJar,
 ): Promise<Response> {
-  return fetchFollowingWithCookies(doFetch, url, init, timeoutMs, validateUrl);
+  return fetchFollowingWithCookies(doFetch, url, init, timeoutMs, validateUrl, jar);
 }
 
 /**
@@ -269,11 +216,10 @@ export async function extractOaContent(
 ): Promise<Extracted | null> {
   const doFetch = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 15000;
-  // Unit tests and embedders with a synthetic fetch can inject the matching
-  // policy. Real network calls always use the public-address policy.
-  const validateUrl = opts.validateUrl ?? (opts.fetchImpl && opts.fetchImpl !== fetch
-    ? async () => undefined
-    : async (candidate: string) => { await assertSafePublicUrl(candidate, []); });
+  const validateUrl = defaultUrlValidator(opts);
+  // Shared across both attempts below: a cookie the JSON probe earns (or that a
+  // consent gate sets on the way) is still valid for the HTML request.
+  const jar = new CookieJar();
   try {
     const jsonUrl = protocolsIoJsonUrl(url);
     if (jsonUrl) {
@@ -283,6 +229,7 @@ export async function extractOaContent(
         { headers: { "User-Agent": userAgent(url.length), Accept: "application/json" } },
         timeoutMs,
         validateUrl,
+        jar,
       );
       if (jres.status === 200) {
         const text = renderProtocolsIo(await jres.json());
@@ -303,6 +250,7 @@ export async function extractOaContent(
       },
       timeoutMs,
       validateUrl,
+      jar,
     );
     if (res.status !== 200) return null;
 
@@ -337,6 +285,126 @@ export async function extractOaContent(
 // article. Kept narrow on purpose: a false positive silently hides real content.
 const BOT_WALL_RE =
   /checking your browser before accessing|just a moment\.\.\.|enable javascript and cookies to continue|verifying you are (a )?human|request unsuccessful\.\s*incapsula|attention required!\s*\|\s*cloudflare|not automatically redirected after \d+ seconds|please (enable|turn on) (javascript|cookies) to (continue|proceed)/i;
+
+// `citation_pdf_url` is the Google Scholar indexing convention and is emitted by
+// most publishers (Nature, Elsevier, Wiley, Springer). Attribute order varies, so
+// match both. This is how we find the document when the landing page carries only
+// an abstract — which is the normal shape for a subscription protocol journal.
+const CITATION_PDF_RES = [
+  /<meta[^>]+\bname=["']citation_pdf_url["'][^>]*\bcontent=["']([^"']+)["']/i,
+  /<meta[^>]+\bcontent=["']([^"']+)["'][^>]*\bname=["']citation_pdf_url["']/i,
+];
+
+/** The publisher's own PDF URL for an article landing page, if it advertises one. */
+export function findCitationPdfUrl(html: string, baseUrl: string): string | null {
+  for (const re of CITATION_PDF_RES) {
+    const m = re.exec(html);
+    if (m?.[1]) {
+      try {
+        return new URL(decodeEntities(m[1]), baseUrl).toString();
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Retrieve a publisher article this network is entitled to read.
+ *
+ * Two hops, deliberately sharing one cookie jar: the landing page completes any
+ * identity-provider handshake, and the PDF request then carries the session it
+ * established. Splitting them across jars is exactly the bug that made this
+ * impossible before — see cookies.ts.
+ *
+ * A subscription landing page typically carries only the abstract, so the PDF is
+ * the document. Returns whichever body is larger, or null if neither is usable.
+ */
+export interface EntitledOutcome {
+  extracted: Extracted | null;
+  /** What the landing page said about this institution's access. */
+  entitlement: Entitlement;
+  evidence: string;
+}
+
+export async function extractEntitledArticle(
+  url: string,
+  opts: ProviderOptions,
+  maxChars: number,
+  institution?: string,
+): Promise<EntitledOutcome> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? 20000;
+  const validateUrl = defaultUrlValidator(opts);
+  const jar = new CookieJar();
+  try {
+    const res = await fetchAllowingCookieGate(
+      doFetch,
+      url,
+      {
+        headers: {
+          "User-Agent": userAgent(url.length),
+          Accept: "text/html,application/xhtml+xml,application/pdf,*/*;q=0.8",
+        },
+      },
+      timeoutMs,
+      validateUrl,
+      jar,
+    );
+    if (res.status !== 200) return { extracted: null, entitlement: "unknown", evidence: `HTTP ${res.status}` };
+
+    const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+    // Some DOIs resolve straight to a PDF; no landing page to mine, and being
+    // handed the document is itself proof of entitlement.
+    if (ct.includes("pdf")) {
+      const direct = await pdfToText(res);
+      return direct?.trim()
+        ? { extracted: { text: cap(direct, maxChars), format: "pdf" }, entitlement: "entitled", evidence: "the DOI resolved straight to a PDF" }
+        : { extracted: null, entitlement: "unknown", evidence: "PDF could not be parsed" };
+    }
+
+    const html = await res.text();
+    const landing = htmlToText(html);
+    // The page we already have is the entitlement statement — read it before
+    // spending a second round trip on a PDF the subscription may not cover.
+    const verdict = classifyEntitlement(html, institution);
+    const pdfUrl = findCitationPdfUrl(html, res.url || url);
+
+    if (pdfUrl && verdict.status !== "not-entitled") {
+      const pres = await fetchAllowingCookieGate(
+        doFetch,
+        pdfUrl,
+        { headers: { "User-Agent": userAgent(url.length), Accept: "application/pdf,*/*;q=0.8" } },
+        timeoutMs,
+        validateUrl,
+        jar,
+      );
+      if (pres.status === 200) {
+        const text = await pdfToText(pres);
+        // Prefer the PDF only when it actually beats the landing page: a paywall
+        // stub PDF is shorter than the abstract it replaced.
+        if (text && text.trim().length > landing.length) {
+          // Being served the document outranks whatever the page said.
+          return {
+            extracted: { text: cap(text, maxChars), format: "pdf" },
+            entitlement: "entitled",
+            evidence: verdict.status === "entitled" ? verdict.evidence : "the publisher served the full PDF",
+          };
+        }
+      }
+    }
+
+    const usable = landing && !looksLikeBotWall(landing) ? { text: cap(landing, maxChars), format: "html" as const } : null;
+    return { extracted: usable, entitlement: verdict.status, evidence: verdict.evidence };
+  } catch (err) {
+    return {
+      extracted: null,
+      entitlement: "unknown",
+      evidence: err instanceof Error ? err.message : "retrieval failed",
+    };
+  }
+}
 
 /**
  * True when extraction produced a bot challenge rather than an article. Returning

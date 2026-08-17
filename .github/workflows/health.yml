@@ -4,10 +4,10 @@ name: Backend health
 # README's health block. Runs daily because the failure mode this catches is a
 # provider changing behaviour on its own schedule, not a change to this repo.
 #
-# Every run is also appended to health-history.jsonl and refreshes the exact DOI
-# observations in fetchability-index.json. The history separates "this broke
-# last night" from "this has been down for two weeks"; the DOI index keeps
-# search from treating a journal-wide prior as a per-paper fact.
+# Every run is also appended to health-history.jsonl, which separates "this broke
+# last night" from "this has been down for two weeks". Per-DOI outcomes appear in
+# the run's report artifact but are not committed: retrieval depends on the
+# network the probe ran from, so publishing them as facts would overstate them.
 
 on:
   schedule:
@@ -54,7 +54,6 @@ jobs:
         run: >-
           node scripts/health-check.mjs --write
           --json-out health-report.json
-          --fetchability-out fetchability-index.json
 
       # The full per-source and per-DOI detail of a single run, kept for 90 days. The
       # committed history file holds the summary of every run forever; this
@@ -65,7 +64,6 @@ jobs:
           name: health-report
           path: |
             health-report.json
-            fetchability-index.json
           retention-days: 90
 
       # The block carries a "last run" stamp and the history file gains a line,
@@ -74,13 +72,13 @@ jobs:
       # as stale exactly when everything is fine.
       - name: Commit the refreshed block and history
         run: |
-          if git diff --quiet -- README.md health-history.jsonl fetchability-index.json; then
+          if git diff --quiet -- README.md health-history.jsonl; then
             echo "No change to health outputs — nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md health-history.jsonl fetchability-index.json
+          git add README.md health-history.jsonl
           # [skip ci] so the daily doc commit doesn't re-trigger the test workflow.
           git commit -m "chore: daily backend health check $(date -u +%Y-%m-%d) [skip ci]"
           # A concurrent push (another workflow, a merge) would otherwise fail

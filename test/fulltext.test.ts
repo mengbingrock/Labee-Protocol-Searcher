@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getProtocolFulltext, pmcidFromUrl } from "../src/fulltext.ts";
+import { directPdfUrl, displayOnlyPdfUrl, getProtocolFulltext, pmcidFromUrl } from "../src/fulltext.ts";
 
 const searchHit = (extra: Record<string, unknown>) =>
   JSON.stringify({ resultList: { result: [{ id: "123", source: "MED", title: "My Protocol", ...extra }] } });
@@ -310,5 +310,76 @@ describe("getProtocolFulltext — a bare-numbered PMC location", () => {
     expect(out).toContain("PMC3004291");
     expect(calls.some((u) => u.includes("efetch.fcgi"))).toBe(true);
     expect(out).not.toContain("Checking your browser");
+  });
+});
+
+describe("displayOnlyPdfUrl", () => {
+  const freePdf = {
+    fullTextUrl: [
+      { availability: "Free", documentStyle: "pdf", url: "https://europepmc.org/articles/PMC1?pdf=render" },
+    ],
+  };
+
+  it("offers the rendered PDF for a free-to-read record outside the OA subset", () => {
+    expect(
+      displayOnlyPdfUrl({ pmcid: "PMC6017984", inEPMC: "Y", isOpenAccess: "N", fullTextUrlList: freePdf }),
+    ).toBe("https://europepmc.org/articles/PMC6017984?pdf=render");
+  });
+
+  it("declines an OA-subset record, which the proper OA tiers already serve", () => {
+    expect(
+      displayOnlyPdfUrl({ pmcid: "PMC1", inEPMC: "Y", isOpenAccess: "Y", fullTextUrlList: freePdf }),
+    ).toBeNull();
+  });
+
+  it("declines when the full text is not in Europe PMC at all", () => {
+    expect(
+      displayOnlyPdfUrl({ pmcid: "PMC1", inEPMC: "N", isOpenAccess: "N", fullTextUrlList: freePdf }),
+    ).toBeNull();
+  });
+
+  it("declines when no free PDF is advertised", () => {
+    expect(
+      displayOnlyPdfUrl({
+        pmcid: "PMC1",
+        inEPMC: "Y",
+        isOpenAccess: "N",
+        fullTextUrlList: {
+          fullTextUrl: [{ availability: "Subscription required", documentStyle: "pdf", url: "https://x" }],
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("declines without a PMCID", () => {
+    expect(displayOnlyPdfUrl({ inEPMC: "Y", isOpenAccess: "N", fullTextUrlList: freePdf })).toBeNull();
+  });
+});
+
+describe("directPdfUrl", () => {
+  it("maps a Bio-protocol DOI to the publisher's public PDF", () => {
+    expect(directPdfUrl("10.21769/BioProtoc.5775")).toBe(
+      "https://en.bio-protocol.org/pdf/Bio-protocol5775.pdf",
+    );
+  });
+
+  it("is case-insensitive and tolerates a doi: prefix", () => {
+    expect(directPdfUrl("doi:10.21769/bioprotoc.2829")).toBe(
+      "https://en.bio-protocol.org/pdf/Bio-protocol2829.pdf",
+    );
+  });
+
+  it("declines a DOI from any other publisher", () => {
+    expect(directPdfUrl("10.1038/nprot.2017.006")).toBeNull();
+    expect(directPdfUrl("10.1002/cpz1.289")).toBeNull();
+  });
+
+  it("declines a malformed Bio-protocol DOI rather than guessing an id", () => {
+    expect(directPdfUrl("10.21769/BioProtoc.abc")).toBeNull();
+    expect(directPdfUrl("10.21769/SomethingElse.5775")).toBeNull();
+  });
+
+  it("declines undefined", () => {
+    expect(directPdfUrl(undefined)).toBeNull();
   });
 });

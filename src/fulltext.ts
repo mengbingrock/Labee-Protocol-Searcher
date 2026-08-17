@@ -27,7 +27,9 @@
 // case as an abstract rather than reaching for the publisher's HTML.
 
 import { type ProviderOptions, fetchWithRetry, stripTags } from "./providers/types.ts";
-import { extractOaContent } from "./extract.ts";
+import { extractEntitledArticle, extractOaContent, looksLikeBotWall } from "./extract.ts";
+import { institutionName, networkContext, onAcademicNetwork } from "./network-context.ts";
+import { cachedEntitlement, entitlementKey, rememberEntitlement } from "./entitlement.ts";
 
 const SEARCH_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 const FULLTEXT_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest";
@@ -62,6 +64,15 @@ interface EpmcResult {
   /** Present on `resultType=core` for essentially every indexed article. */
   abstractText?: string;
   meshHeadingList?: { meshHeading?: { descriptorName?: string }[] };
+  /** Europe PMC's own list of where the full text can be read. */
+  fullTextUrlList?: {
+    fullTextUrl?: { availability?: string; documentStyle?: string; url?: string }[];
+  };
+  /** "Y" only for the PMC Open Access Subset — see displayOnlyPdfUrl(). */
+  isOpenAccess?: string;
+  inEPMC?: string;
+  /** Entitlement is per journal, not per publisher, so the title is the cache key. */
+  journalInfo?: { journal?: { title?: string } };
 }
 interface EpmcSearchResponse {
   resultList?: { result?: EpmcResult[] };
@@ -70,6 +81,72 @@ interface EpmcSearchResponse {
 /** Machine-readable status footer the agent can branch on. */
 function withStatus(text: string, status: string): string {
   return `${text}\n\n_status: ${status}_`;
+}
+
+/**
+ * Europe PMC's rendered PDF for an article that is free to read but sits outside
+ * the Open Access Subset.
+ *
+ * These are records with `inEPMC: Y` and `isOpenAccess: N`: the publisher granted
+ * PMC the right to *display* the full text, but not the redistribution licence
+ * that puts an article in the OA subset. Consequently the `fullTextXML` endpoint
+ * and NCBI's OA service both decline it (`idIsNotOpenAccess`) — which is why the
+ * tiers above come up empty — while Europe PMC still lists a "Free pdf" URL that
+ * any browser can open.
+ *
+ * Retrieving it circumvents no authentication, paywall or challenge; the flag it
+ * disregards is about redistribution rights, not access. That is a licence
+ * judgement rather than a technical one, so it is opt-out-able:
+ * PROTOCOLS_DISPLAY_ONLY_FETCH=off. The result is labelled `display-only-full-text`
+ * so it is never mistaken for open-access content that may be redistributed.
+ */
+export function displayOnlyPdfUrl(result: {
+  pmcid?: string;
+  isOpenAccess?: string;
+  inEPMC?: string;
+  fullTextUrlList?: {
+    fullTextUrl?: { availability?: string; documentStyle?: string; url?: string }[];
+  };
+}): string | null {
+  if (!result.pmcid) return null;
+  if (result.isOpenAccess === "Y") return null; // the OA tiers above own this case
+  if (result.inEPMC !== "Y") return null;
+  const advertisesFreePdf = (result.fullTextUrlList?.fullTextUrl ?? []).some(
+    (u) => u.availability?.startsWith("Free") && u.documentStyle === "pdf",
+  );
+  if (!advertisesFreePdf) return null;
+  return `https://europepmc.org/articles/${result.pmcid}?pdf=render`;
+}
+
+/**
+ * Publishers that serve the article PDF from a stable, public URL derivable from
+ * the DOI.
+ *
+ * Bio-protocol is the motivating case: its HTML article page sits behind a
+ * SafeLine WAF challenge that no automated client can pass, while the PDF itself
+ * is served straight from `en.bio-protocol.org/pdf/` with no gate at all. The
+ * articles are CC BY-NC, so this is the publisher's own open copy — a different
+ * endpoint, not a way around the challenge.
+ *
+ * Add a publisher here only when the mapping is deterministic and the content is
+ * openly licensed.
+ */
+const DIRECT_PDF: { re: RegExp; build: (m: RegExpMatchArray) => string }[] = [
+  {
+    // 10.21769/BioProtoc.5775 → https://en.bio-protocol.org/pdf/Bio-protocol5775.pdf
+    re: /^10\.21769\/bioprotoc\.(\d+)$/i,
+    build: (m) => `https://en.bio-protocol.org/pdf/Bio-protocol${m[1]}.pdf`,
+  },
+];
+
+export function directPdfUrl(doi: string | undefined): string | null {
+  if (!doi) return null;
+  const clean = doi.trim().replace(/^doi:/i, "");
+  for (const { re, build } of DIRECT_PDF) {
+    const m = clean.match(re);
+    if (m) return build(m);
+  }
+  return null;
 }
 
 /** Build the Europe PMC search query that best resolves a raw identifier. */
@@ -451,6 +528,41 @@ export async function getProtocolFulltext(
     // Both PMC endpoints declined — fall through before giving up.
   }
 
+  // --- Step 2.4: the publisher's own public PDF, when the DOI maps to one. ---
+  // Placed ahead of the PMC and Unpaywall tiers because it is the publisher's
+  // native open copy: better licensed than the display-only PMC route below, and
+  // it sidesteps an HTML page that may be gated without touching that gate.
+  const direct = directPdfUrl(doi);
+  if (direct) {
+    const extracted = await extractOaContent(direct, { fetchImpl: doFetch, timeoutMs }, MAX_CHARS);
+    // The endpoint answers a bad id with HTTP 200 and an HTML landing page rather
+    // than a 404, so status is not a usable signal — require an actual parsed PDF.
+    if (extracted?.format === "pdf" && extracted.text.trim()) {
+      return withStatus(
+        `${heading}\n\n_Source: publisher open-access PDF (${direct})._\n\n${extracted.text}`,
+        "ok",
+      );
+    }
+  }
+
+  // --- Step 2.5: free-to-read PMC copy outside the OA subset. ---
+  // The tiers above only serve the OA subset, so an article the publisher let PMC
+  // display without an open licence lands here rather than in step 2.
+  const displayOnly =
+    process.env.PROTOCOLS_DISPLAY_ONLY_FETCH?.trim().toLowerCase() === "off"
+      ? null
+      : displayOnlyPdfUrl(result);
+  if (displayOnly) {
+    const extracted = await extractOaContent(displayOnly, { fetchImpl: doFetch, timeoutMs }, MAX_CHARS);
+    if (extracted?.text?.trim() && !looksLikeBotWall(extracted.text)) {
+      return withStatus(
+        `${heading}\n\n_Source: Europe PMC free-to-read PDF (${result.pmcid}) — free to read but ` +
+          `outside the Open Access Subset, so it carries no redistribution licence._\n\n${extracted.text}`,
+        "display-only-full-text",
+      );
+    }
+  }
+
   // --- Step 3: Unpaywall — recover a PMC copy, else a direct OA link. ---
   const oa = await tryUnpaywall(doi, doFetch, timeoutMs);
   if (oa?.pmcid) {
@@ -483,6 +595,58 @@ export async function getProtocolFulltext(
     );
   }
 
+  // --- Step 3.5: entitled retrieval. ---
+  // Two gates, not one. The network gate asks "could this address hold any
+  // subscription?"; the entitlement gate asks "does it hold *this journal*?" —
+  // a distinction publishers make and we used to ignore, spending a full PDF
+  // round trip on titles the institution never bought.
+  //
+  // The verdict is cached per journal, so the first article from an unavailable
+  // title pays one landing-page fetch and every later one costs nothing.
+  //
+  // Nothing here is open access: it is content this IP is entitled to, labelled
+  // as such and never described as open. PROTOCOLS_ENTITLED_FETCH=off skips it.
+  const entitledEnabled = process.env.PROTOCOLS_ENTITLED_FETCH?.trim().toLowerCase() !== "off";
+  let entitlementNote = "";
+  if (doi && entitledEnabled && onAcademicNetwork()) {
+    const via = institutionName() ?? networkContext()?.org ?? "this network";
+    const journal = result.journalInfo?.journal?.title;
+    const key = entitlementKey(`https://doi.org/${doi}`, journal);
+    const known = cachedEntitlement(key);
+
+    if (known?.status === "not-entitled") {
+      // Already established for this journal — skip the round trip entirely.
+      entitlementNote =
+        `\n\n_${via} does not appear to subscribe to ${journal ?? "this journal"} ` +
+        `(${known.evidence}), so the publisher's copy was not attempted._`;
+    } else {
+      const outcome = await extractEntitledArticle(
+        `https://doi.org/${doi}`,
+        { fetchImpl: doFetch, timeoutMs },
+        MAX_CHARS,
+        institutionName(),
+      );
+      rememberEntitlement(key, { status: outcome.entitlement, evidence: outcome.evidence });
+
+      const body = outcome.extracted;
+      // A bot wall or a paywall stub extracts as "text" too; both are worse than
+      // the abstract we already hold, so only a substantive body is accepted.
+      if (body && body.text.trim().length > 2000 && !looksLikeBotWall(body.text)) {
+        return withStatus(
+          `${heading}\n\n_Source: publisher ${body.format} via institutional access ` +
+            `(${via}${journal ? ` · ${journal}` : ""}) — NOT open access; redistribution is ` +
+            `governed by that subscription._\n\n${body.text}`,
+          "entitled-full-text",
+        );
+      }
+      if (outcome.entitlement === "not-entitled") {
+        entitlementNote =
+          `\n\n_${via} does not provide access to ${journal ?? "this journal"} ` +
+          `(publisher said: ${outcome.evidence})._`;
+      }
+    }
+  }
+
   // --- Step 4: the abstract, which beats a bare link for a paywalled article. ---
   const pmcNote = result.pmcid
     ? `\n\nA PMC copy exists and is free to read in a browser, though its full text isn't served ` +
@@ -492,7 +656,7 @@ export async function getProtocolFulltext(
   if (abstract) {
     return withStatus(
       `${heading}\n\n_Source: Europe PMC abstract — no open-access full text for this article._\n\n` +
-        `${abstract}${pmcNote}\n\nRead the full protocol at: ${articleUrl(result, trimmed)}`,
+        `${abstract}${pmcNote}${entitlementNote}\n\nRead the full protocol at: ${articleUrl(result, trimmed)}`,
       "abstract-only",
     );
   }

@@ -149,13 +149,13 @@ describe("result fetchability", () => {
     expect(out.results[0]!.fetchable).toBe("none");
   });
 
-  it("lets a fresh per-DOI CI observation override a partial journal prior", async () => {
+  it("promotes a DOI to fetchable on live open-access signals from the backends", async () => {
     process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
     const body = JSON.stringify({
       message: {
         items: [
           {
-            title: ["Verified Nature protocol"],
+            title: ["Open Nature protocol"],
             URL: "https://doi.org/10.1038/nprot.2011.388",
           },
         ],
@@ -165,27 +165,14 @@ describe("result fetchability", () => {
     const out = await search("x", {
       sources: ["nature-protocols"],
       providerOpts: { fetchImpl: f },
-      fetchabilityIndex: {
-        schemaVersion: 1,
-        generatedAt: new Date().toISOString(),
-        dois: {
-          "10.1038/nprot.2011.388": {
-            status: "ok",
-            checkedAt: new Date().toISOString(),
-            retrievalTier: "NCBI author manuscript",
-          },
-        },
-      },
     });
+    // Crossref alone carries no OA signal, so the partial journal prior stands —
+    // there is no longer any shared index that could claim otherwise.
     expect(out.results[0]).toMatchObject({
-      fetchable: "full",
-      availability: {
-        availability: "verified-full-text",
-        confidence: "verified",
-        journalPrior: "partial",
-      },
+      fetchable: "partial",
+      availability: { confidence: "journal-prior", journalPrior: "partial" },
     });
-    expect(renderSearch(out)).toContain("verified-full-text (CI");
+    expect(renderSearch(out)).toContain("may-not-fetch (journal prior; DOI untested)");
   });
 
   it("labels an untested DOI explicitly as a journal prior", async () => {
@@ -199,7 +186,6 @@ describe("result fetchability", () => {
     const out = await search("x", {
       sources: ["nature-protocols"],
       providerOpts: { fetchImpl: f },
-      fetchabilityIndex: { schemaVersion: 1, generatedAt: new Date().toISOString(), dois: {} },
     });
     expect(renderSearch(out)).toContain("may-not-fetch (journal prior; DOI untested)");
   });

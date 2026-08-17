@@ -8,7 +8,6 @@
   },
   "files": [
     "dist",
-    "fetchability-index.json",
     "README.md",
     "LICENSE"
   ],

@@ -13,11 +13,11 @@ import {
   type RawResult,
   type WebProvider,
   decodeEntities,
-  fetchWithTimeout,
   sleep,
   stripTags,
   userAgent,
 } from "./types.ts";
+import { CookieJar, defaultUrlValidator, fetchFollowingWithCookies } from "../cookies.ts";
 
 const ENDPOINTS = ["https://lite.duckduckgo.com/lite/", "https://html.duckduckgo.com/html/"];
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -130,6 +130,11 @@ export const duckduckgoProvider: WebProvider = {
   async run(query, limit, opts: ProviderOptions = {}): Promise<ProviderQueryResult> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const doFetch = opts.fetchImpl ?? fetch;
+    const validateUrl = defaultUrlValidator(opts);
+    // One jar for the whole attempt sequence. DuckDuckGo's 202 challenge sets
+    // cookies it then expects back; with a per-request jar every retry looked
+    // like a brand-new client and re-earned the same challenge.
+    const jar = new CookieJar();
     let lastStatus = 0;
     let lastError = "";
     let seed = 0;
@@ -139,11 +144,13 @@ export const duckduckgoProvider: WebProvider = {
       for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_ENDPOINT; attempt++) {
         if (seed > 0) await sleep(300 * Math.pow(2, attempt) + Math.floor(seed * 53) % 200);
         try {
-          const res = await fetchWithTimeout(
+          const res = await fetchFollowingWithCookies(
             doFetch,
             url,
-            { headers: headers(seed++), redirect: "follow" },
+            { headers: headers(seed++) },
             timeoutMs,
+            validateUrl,
+            jar,
           );
           lastStatus = res.status;
           const body = await res.text();
