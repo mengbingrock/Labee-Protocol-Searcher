@@ -35,6 +35,7 @@ const SEARCH_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 const FULLTEXT_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest";
 const EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const UNPAYWALL_BASE = "https://api.unpaywall.org/v2";
+const OPENALEX_BASE = "https://api.openalex.org/works";
 // NCBI asks every client to identify itself; `tool` must be stable and
 // space-free. Their guidelines allow 3 requests/second, or 10 with an API key —
 // `fetch` makes one call per user request, so neither is close to binding.
@@ -349,6 +350,31 @@ interface UnpaywallHit {
   version?: string | undefined;
 }
 
+interface OpenAlexLocation {
+  landing_page_url?: string | null;
+  pdf_url?: string | null;
+  license?: string | null;
+  version?: string | null;
+}
+
+interface OpenAlexWork {
+  open_access?: {
+    is_oa?: boolean;
+    oa_status?: string | null;
+    oa_url?: string | null;
+  };
+  best_oa_location?: OpenAlexLocation | null;
+  locations?: OpenAlexLocation[];
+}
+
+interface OpenAlexHit {
+  pmcid?: string;
+  oaUrl: string;
+  license?: string;
+  version?: string;
+  oaStatus?: string;
+}
+
 /**
  * The PMCID in an Unpaywall location URL. Unpaywall writes PMC links both ways —
  * `/pmc/articles/PMC3868217` and, for older records, `/pmc/articles/3004291` —
@@ -386,12 +412,74 @@ async function tryUnpaywall(
     );
     for (const loc of locs) {
       const pmcid = pmcidFromUrl(`${loc.url ?? ""} ${loc.url_for_pdf ?? ""}`);
-      if (pmcid) return { pmcid, license: loc.license, version: loc.version };
+      if (pmcid) {
+        return {
+          pmcid,
+          ...(loc.url_for_pdf ?? loc.url ? { oaUrl: loc.url_for_pdf ?? loc.url } : {}),
+          license: loc.license,
+          version: loc.version,
+        };
+      }
     }
     const best = json.best_oa_location ?? locs[0];
     const link = best?.url_for_pdf ?? best?.url;
     if (link) return { oaUrl: link, license: best?.license, version: best?.version };
     return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * OpenAlex is deliberately a late metadata fallback. Newly deposited PMC copies
+ * can appear there before Europe PMC adds a PMCID to its search record (Current
+ * Protocols e70422 is a measured example). OpenAlex does not serve the article;
+ * it only lets us retain the public repository URL instead of incorrectly
+ * concluding that no copy exists.
+ */
+async function tryOpenAlex(
+  doi: string | undefined,
+  doFetch: typeof fetch,
+  timeoutMs: number,
+): Promise<OpenAlexHit | null> {
+  if (!doi) return null;
+  try {
+    const id = `https://doi.org/${doi}`;
+    const url = `${OPENALEX_BASE}/${encodeURIComponent(id)}?mailto=${encodeURIComponent(contactEmail())}`;
+    const res = await fetchWithRetry(
+      doFetch,
+      url,
+      { headers: { Accept: "application/json" } },
+      timeoutMs,
+      { retries: 1 },
+    );
+    if (res.status !== 200) return null;
+    const json = (await res.json()) as OpenAlexWork;
+    if (!json.open_access?.is_oa) return null;
+
+    const locations = [json.best_oa_location, ...(json.locations ?? [])].filter(
+      (location): location is OpenAlexLocation => Boolean(location),
+    );
+    const urlCandidates = [
+      json.open_access.oa_url,
+      ...locations.flatMap((location) => [location.pdf_url, location.landing_page_url]),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const oaUrl = urlCandidates.find((candidate) => Boolean(pmcidFromUrl(candidate))) ?? urlCandidates[0];
+    if (!oaUrl) return null;
+
+    const selected = locations.find(
+      (location) => location.pdf_url === oaUrl || location.landing_page_url === oaUrl,
+    );
+    const license = selected?.license?.trim() || undefined;
+    const version = selected?.version?.trim() || undefined;
+    const pmcid = pmcidFromUrl(oaUrl);
+    return {
+      oaUrl,
+      ...(pmcid ? { pmcid } : {}),
+      ...(license ? { license } : {}),
+      ...(version ? { version } : {}),
+      ...(json.open_access.oa_status ? { oaStatus: json.open_access.oa_status } : {}),
+    };
   } catch {
     return null;
   }
@@ -480,6 +568,25 @@ function doiFor(result: EpmcResult, id: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+function displayOnlyEnabled(): boolean {
+  return process.env.PROTOCOLS_DISPLAY_ONLY_FETCH?.trim().toLowerCase() !== "off";
+}
+
+function displayOnlyLink(
+  heading: string,
+  pmcid: string,
+  url: string,
+  citation: string,
+): string {
+  return withStatus(
+    `${heading}\n\nA full-text PMC copy is free to read in a browser, but it is outside the ` +
+      `Open Access Subset and carries no explicit redistribution licence. Labee therefore ` +
+      `keeps it as display-only instead of calling it openly licensed:\n\n${url}\n\n` +
+      `PMCID: ${pmcid}\n\nCitation: ${citation}`,
+    "display-only-link",
+  );
+}
+
 /**
  * Fetch open-access full text for a DOI / PMID / PMCID and return it as
  * markdown, falling back through Unpaywall to a citation link. Never throws for
@@ -549,9 +656,7 @@ export async function getProtocolFulltext(
   // The tiers above only serve the OA subset, so an article the publisher let PMC
   // display without an open licence lands here rather than in step 2.
   const displayOnly =
-    process.env.PROTOCOLS_DISPLAY_ONLY_FETCH?.trim().toLowerCase() === "off"
-      ? null
-      : displayOnlyPdfUrl(result);
+    displayOnlyEnabled() ? displayOnlyPdfUrl(result) : null;
   if (displayOnly) {
     const extracted = await extractOaContent(displayOnly, { fetchImpl: doFetch, timeoutMs }, MAX_CHARS);
     if (extracted?.text?.trim() && !looksLikeBotWall(extracted.text)) {
@@ -574,7 +679,62 @@ export async function getProtocolFulltext(
         "ok",
       );
     }
+    if (displayOnlyEnabled() && oa.oaUrl && !oa.license) {
+      return displayOnlyLink(heading, oa.pmcid, oa.oaUrl, articleUrl(result, trimmed));
+    }
   }
+
+  // --- Step 3.2: OpenAlex — catch repository deposits ahead of EPMC indexing. ---
+  // OpenAlex can know about a PMC landing page before Europe PMC exposes the
+  // PMCID in its own search record. We still ask the proper PMC APIs first. If
+  // they decline and OpenAlex supplies no licence, retain the browser-readable
+  // copy as display-only rather than incorrectly reporting that no copy exists.
+  const openAlex = await tryOpenAlex(doi, doFetch, timeoutMs);
+  if (openAlex?.pmcid) {
+    const hit = await fetchPmcFulltext(openAlex.pmcid, doFetch, timeoutMs, section);
+    if (hit) {
+      const lic = openAlex.license ? ` · ${openAlex.license}` : "";
+      return withStatus(
+        `${heading}\n\n_Source: OpenAlex → ${hit.via} full text (${openAlex.pmcid}${lic})._\n\n` +
+          hit.markdown,
+        "ok",
+      );
+    }
+    if (displayOnlyEnabled() && !openAlex.license) {
+      return displayOnlyLink(
+        heading,
+        openAlex.pmcid,
+        openAlex.oaUrl,
+        articleUrl(result, trimmed),
+      );
+    }
+  }
+  if (openAlex?.oaUrl) {
+    const meta = [openAlex.version, openAlex.license, openAlex.oaStatus].filter(Boolean).join(", ");
+    const extracted = await extractOaContent(
+      openAlex.oaUrl,
+      { fetchImpl: doFetch, timeoutMs },
+      MAX_CHARS,
+    );
+    if (extracted) {
+      const status = openAlex.license ? "ok" : "display-only-full-text";
+      const rights = openAlex.license
+        ? "open-access"
+        : "free-to-read, with no explicit redistribution licence";
+      return withStatus(
+        `${heading}\n\n_Source: OpenAlex ${rights} ${extracted.format}, best-effort extraction ` +
+          `from ${openAlex.oaUrl}${meta ? ` (${meta})` : ""}._\n\n${extracted.text}`,
+        status,
+      );
+    }
+    return withStatus(
+      `${heading}\n\nOpenAlex reports a public copy, but Labee could not extract it automatically` +
+        `${meta ? ` (${meta})` : ""}:\n\n${openAlex.oaUrl}\n\n` +
+        `Citation: ${articleUrl(result, trimmed)}`,
+      openAlex.license ? "oa-link" : "display-only-link",
+    );
+  }
+
   if (oa?.oaUrl) {
     const meta = [oa.version, oa.license].filter(Boolean).join(", ");
     // Try to extract the OA copy's actual text (HTML/XML always; PDF if `unpdf`
@@ -655,7 +815,8 @@ export async function getProtocolFulltext(
   const abstract = abstractBlock(result);
   if (abstract) {
     return withStatus(
-      `${heading}\n\n_Source: Europe PMC abstract — no open-access full text for this article._\n\n` +
+      `${heading}\n\n_Source: Europe PMC abstract — no public open-access full text was found ` +
+        `at retrieval time._\n\n` +
         `${abstract}${pmcNote}${entitlementNote}\n\nRead the full protocol at: ${articleUrl(result, trimmed)}`,
       "abstract-only",
     );
@@ -663,7 +824,8 @@ export async function getProtocolFulltext(
 
   // --- No open text and no abstract: return a citation link. ---
   return withStatus(
-    `${heading}\n\nNo open-access full text is available for this article via Europe PMC, NCBI or Unpaywall.` +
+    `${heading}\n\nNo public open-access full text was found at retrieval time via Europe PMC, ` +
+      `NCBI, Unpaywall or OpenAlex.` +
       `${pmcNote}\n\nRead it at: ${articleUrl(result, trimmed)}`,
     "no-open-fulltext",
   );

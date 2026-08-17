@@ -154,9 +154,11 @@ function normalizeDoi(value) {
   return /^10\.\d{4,9}\/\S+$/.test(doi) ? doi : "";
 }
 
+const FULL_TEXT_STATUSES = new Set(["ok", "entitled-full-text", "display-only-full-text"]);
+
 function contentOfStatus(status) {
-  if (status === "ok") return "full-text";
-  if (status === "oa-link") return "open-link";
+  if (FULL_TEXT_STATUSES.has(status)) return "full-text";
+  if (status === "oa-link" || status === "display-only-link") return "open-link";
   if (status === "abstract-only" || status === "no-open-fulltext") return "abstract";
   if (status === "not-found" || status === "not-fetchable" || status === "bad-id") {
     return "unavailable";
@@ -329,7 +331,7 @@ function driftOf(row) {
   if (row.declared === "full" && row.fetchStatus === "not-fetchable") {
     return "graded `full` but the site refused the request";
   }
-  if (row.declared === "none" && row.fetchStatus === "ok") {
+  if (row.declared === "none" && FULL_TEXT_STATUSES.has(row.fetchStatus)) {
     return "graded `none` but the page extracted fine";
   }
   return "";
@@ -348,7 +350,7 @@ function sourceCell(row) {
 
 function fetchCell(row) {
   if (!row.fetchStatus) return `${NA} not probed`;
-  const icon = row.fetchStatus === "ok" ? OK : row.fetchStatus === "not-fetchable" ? BAD : WARN;
+  const icon = FULL_TEXT_STATUSES.has(row.fetchStatus) ? OK : row.fetchStatus === "not-fetchable" ? BAD : WARN;
   return `${icon} \`${row.fetchStatus}\`${row.tier ? ` · ${row.tier}` : ""}`;
 }
 
@@ -371,9 +373,9 @@ export function summarize(report) {
     down: report.providers.filter((p) => p.state === "down").map((p) => p.id),
     sourcesWithHits: sources.filter((s) => s.count > 0).length,
     sourcesProbed: sources.length,
-    fetchOk: sources.filter((s) => s.fetchStatus === "ok").length,
+    fetchOk: sources.filter((s) => FULL_TEXT_STATUSES.has(s.fetchStatus)).length,
     doisTested: report.doiFetchability?.length ?? 0,
-    doisWithFullText: (report.doiFetchability ?? []).filter((row) => row.status === "ok").length,
+    doisWithFullText: (report.doiFetchability ?? []).filter((row) => FULL_TEXT_STATUSES.has(row.status)).length,
     drift: sources.filter((s) => s.drift).map((s) => s.id),
     sweepFailed: Boolean(report.searchError),
   };
@@ -516,7 +518,7 @@ function renderBlock(report, history = []) {
   }
   lines.push("");
   lines.push(
-    `**Per-DOI retrieval:** ${doiFetchability.filter((row) => row.status === "ok").length}/` +
+    `**Per-DOI retrieval:** ${doiFetchability.filter((row) => FULL_TEXT_STATUSES.has(row.status)).length}/` +
       `${doiFetchability.length} returned full text in this run. Not persisted: the result ` +
       "depends on the network the probe ran from, so it is reported, not published as a fact.",
   );

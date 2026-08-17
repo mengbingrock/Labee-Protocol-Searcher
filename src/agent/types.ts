@@ -5,6 +5,9 @@ export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancell
 
 export type FetchStatus =
   | "ok"
+  | "entitled-full-text"
+  | "display-only-full-text"
+  | "display-only-link"
   | "abstract-only"
   | "oa-link"
   | "no-open-fulltext"

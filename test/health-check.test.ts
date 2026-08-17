@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendHistory,
+  contentOfStatus,
   driftOf,
   historyRows,
   parseHistory,
@@ -46,6 +47,18 @@ describe("tierOf", () => {
   });
 });
 
+describe("contentOfStatus", () => {
+  it("counts licensed, entitled, and display-only bodies as full text", () => {
+    expect(contentOfStatus("ok")).toBe("full-text");
+    expect(contentOfStatus("entitled-full-text")).toBe("full-text");
+    expect(contentOfStatus("display-only-full-text")).toBe("full-text");
+  });
+
+  it("keeps a display-only landing page in the link tier", () => {
+    expect(contentOfStatus("display-only-link")).toBe("open-link");
+  });
+});
+
 describe("driftOf", () => {
   it("flags a source graded full that refused the request", () => {
     expect(driftOf({ declared: "full", fetchStatus: "not-fetchable" })).toMatch(/refused/);
@@ -53,6 +66,7 @@ describe("driftOf", () => {
 
   it("flags a source graded none that extracted fine", () => {
     expect(driftOf({ declared: "none", fetchStatus: "ok" })).toMatch(/extracted/);
+    expect(driftOf({ declared: "none", fetchStatus: "display-only-full-text" })).toMatch(/extracted/);
   });
 
   it("stays quiet for a partial source, whichever way it went", () => {

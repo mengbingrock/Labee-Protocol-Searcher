@@ -38,7 +38,7 @@ describe("getProtocolFulltext", () => {
   it("falls back to a citation link when there is no open-access PMCID", async () => {
     const f = router(searchHit({ doi: "10.1/paywalled" }));
     const out = await getProtocolFulltext("10.1/paywalled", { fetchImpl: f });
-    expect(out).toContain("No open-access full text");
+    expect(out).toContain("No public open-access full text was found at retrieval time");
     expect(out).toContain("https://doi.org/10.1/paywalled");
   });
 
@@ -265,6 +265,92 @@ describe("getProtocolFulltext — Unpaywall fallback", () => {
     const out = await getProtocolFulltext("10.5/pdf", { fetchImpl: f });
     expect(out).toContain("https://oa.example/x.pdf");
     expect(out).toContain("_status: oa-link_");
+  });
+});
+
+describe("getProtocolFulltext — OpenAlex late PMC fallback", () => {
+  const abstractText =
+    "A sufficiently detailed abstract for a newly indexed Current Protocols article whose PMC " +
+    "deposit has reached OpenAlex before Europe PMC has attached the PMCID to its search record.";
+
+  function openAlexRouter(options: { jats?: string; licensed?: boolean; open?: boolean } = {}) {
+    const calls: string[] = [];
+    const impl = (async (url: string) => {
+      calls.push(url);
+      if (url.includes("europepmc") && url.includes("/search")) {
+        return new Response(
+          searchHit({ doi: "10.1002/cpz1.70422", abstractText }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("api.unpaywall.org")) {
+        return new Response(JSON.stringify({ is_oa: false }), { status: 200 });
+      }
+      if (url.includes("api.openalex.org")) {
+        return new Response(
+          JSON.stringify({
+            open_access: {
+              is_oa: options.open !== false,
+              oa_status: options.open === false ? "closed" : "green",
+              oa_url: options.open === false
+                ? null
+                : "https://pmc.ncbi.nlm.nih.gov/articles/PMC13355615/",
+            },
+            best_oa_location: options.open === false
+              ? null
+              : {
+                  landing_page_url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13355615/",
+                  license: options.licensed ? "cc-by" : null,
+                  version: "submittedVersion",
+                },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("fullTextXML")) {
+        return options.jats
+          ? new Response(options.jats, { status: 200 })
+          : new Response("not in OA subset", { status: 404 });
+      }
+      if (url.includes("efetch.fcgi")) {
+        return new Response(
+          "<article><front><article-meta>metadata only</article-meta></front></article>",
+          { status: 200 },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("keeps a public PMC deposit as display-only when the OA services reject it", async () => {
+    const { impl, calls } = openAlexRouter();
+    const out = await getProtocolFulltext("10.1002/cpz1.70422", { fetchImpl: impl });
+
+    expect(out).toContain("PMC13355615");
+    expect(out).toContain("free to read in a browser");
+    expect(out).toContain("no explicit redistribution licence");
+    expect(out).toContain("_status: display-only-link_");
+    expect(out).not.toContain("no public open-access full text was found");
+    expect(calls.some((url) => url.includes("api.openalex.org"))).toBe(true);
+    expect(calls.some((url) => url.includes("efetch.fcgi"))).toBe(true);
+  });
+
+  it("uses proper JATS when OpenAlex recovers a late-indexed licensed PMC record", async () => {
+    const { impl } = openAlexRouter({ jats: FULLTEXT_XML, licensed: true });
+    const out = await getProtocolFulltext("10.1002/cpz1.70422", { fetchImpl: impl });
+
+    expect(out).toContain("OpenAlex → Europe PMC full text");
+    expect(out).toContain("Step 1: mix the reagents.");
+    expect(out).toContain("_status: ok_");
+  });
+
+  it("describes a closed record as a retrieval-time result, not a permanent fact", async () => {
+    const { impl } = openAlexRouter({ open: false });
+    const out = await getProtocolFulltext("10.1002/cpz1.70422", { fetchImpl: impl });
+
+    expect(out).toContain("no public open-access full text was found at retrieval time");
+    expect(out).toContain("_status: abstract-only_");
   });
 });
 
