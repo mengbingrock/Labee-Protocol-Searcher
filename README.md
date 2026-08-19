@@ -183,7 +183,7 @@ every day. The customer-facing summary from the latest run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-18T05:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-19T05:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 ❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
@@ -196,7 +196,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `openalex` | journal | ✅ 3 results |
 | `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
-| `brave` | web | ✅ 1 result |
+| `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
 | `duckduckgo` | web | ❌ duckduckgo: search returned HTTP 202 (via duckduckgo) |
 
@@ -210,7 +210,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `bio-protocol` | ✅ full | ✅ 9 | ✅ `ok` · Europe PMC |
 | `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
-| `thermofisher` | ✅ full | ✅ 1 | ✅ `ok` · html extraction |
+| `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
 | `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `neb` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
 | `bio-rad` | ⚠️ partial | ✅ 3 | ✅ `ok` · html extraction |
@@ -229,6 +229,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-19 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-18 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-17 | ⚠️ 4/7 | ❌ sweep failed | — | `openalex`, `semanticscholar`, `duckduckgo` | — |
 | 2026-08-16 | ⚠️ 6/7 | ✅ 16/16 | ⚠️ 11/16 | `duckduckgo` | — |
