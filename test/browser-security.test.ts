@@ -1,12 +1,7 @@
-import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CdpBrowserAdapter, looksLikeProtocolEvidence } from "../src/agent/browser.ts";
-import { FileJobStore } from "../src/agent/store.ts";
-import type { DeepSearchSpec, FindingRecord } from "../src/agent/types.ts";
 import {
   assertLoopbackCdpEndpoint,
   assertLoopbackCdpWebSocketEndpoint,
@@ -25,50 +20,6 @@ async function listen(server: Server): Promise<number> {
 async function close(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
 }
-
-const spec: DeepSearchSpec = {
-  query: "PCR",
-  keywords: ["PCR", "PCR protocol", "PCR methods", "PCR step-by-step", "PCR open access"],
-  limit: 1,
-  maxRounds: 5,
-  maxSeconds: 60,
-  maxBrowserPages: 2,
-  maxBrowserSearchPages: 2,
-  browser: "off",
-  createdAt: "2026-08-10T00:00:00.000Z",
-};
-
-describe("FileJobStore", () => {
-  it("creates durable state and appends recoverable findings", async () => {
-    const root = await mkdtemp(join(tmpdir(), "labee-agent-store-"));
-    const store = new FileJobStore(root);
-    const progress = await store.create(spec);
-    expect((await store.readSpec(progress.id)).keywords).toHaveLength(5);
-    const finding: FindingRecord = {
-      ts: spec.createdAt,
-      iteration: 1,
-      keyword: "PCR",
-      result: { id: "doi:10.1/x", source: "star-protocols", kind: "article", title: "X", fetchable: "full" },
-      nativeStatus: "ok",
-      finalStatus: "ok",
-      verification: "verified",
-      route: "native-fetch",
-      attemptedUrls: [],
-      content: "full text",
-    };
-    await store.appendFinding(progress.id, finding);
-    expect(await store.readFindings(progress.id)).toEqual([finding]);
-    progress.status = "running";
-    await store.writeProgress(progress.id, progress);
-    expect(await store.listIncomplete()).toEqual([progress.id]);
-    expect(JSON.parse(await readFile(join(root, progress.id, "state", "progress.json"), "utf8"))).toMatchObject({ status: "running" });
-  });
-
-  it("rejects path traversal job ids", async () => {
-    const store = new FileJobStore(await mkdtemp(join(tmpdir(), "labee-agent-store-")));
-    expect(() => store.readProgress("../../etc/passwd")).toThrow("Invalid job id");
-  });
-});
 
 describe("URL policy", () => {
   const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }] as never;

@@ -86,7 +86,6 @@ function browserEvidence(
  */
 export class DefaultBrowserAdapter implements BrowserAdapter {
   readonly id = "chrome-default-applescript";
-  readonly attemptRoute = "browser-default" as const;
 
   private readonly platform: NodeJS.Platform;
   private readonly interactionTimeoutMs: number;

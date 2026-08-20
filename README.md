@@ -36,7 +36,6 @@ skill are loaded. The plugin downloads the pinned public npm release
 | Publisher and supplier search pages often block automation or hide results behind interactive pages. | Labee uses several independent discovery routes and keeps a direct source link when a page cannot be read automatically. |
 | A promising search result may lead to a paywall, an abstract, or a broken page. | Every result says what Labee expects to be readable, and every retrieval reports what it actually got — the two are never conflated. |
 | One literature index can miss an important paper or be temporarily unavailable. | Labee checks multiple scholarly indexes and combines their findings instead of stopping after the first successful search. |
-| Deep searches can become repetitive, lose progress, or stop after a temporary failure. | Labee can run a durable search that records progress, tries every available route, removes duplicates, and resumes after a restart. |
 | Restriction-enzyme details are difficult to extract from commercial product pages. | Labee reads the open REBASE record for recognition sites, cut positions, isoschizomers, methylation sensitivity, and suppliers. |
 
 ## What you can ask
@@ -110,17 +109,6 @@ on a section such as Methods, Materials, Procedure, or Troubleshooting. If full
 text is unavailable, it returns the best legal alternative it can find rather
 than pretending the retrieval succeeded.
 
-### A thorough search when the question is difficult
-
-For complex requests, Labee’s deep-search mode:
-
-- searches every configured source and available search route;
-- continues after one route succeeds so another source is not silently missed;
-- retrieves every unique result once, then tries additional legal open-access
-  routes when needed;
-- records what worked, what failed, and why;
-- keeps its progress so an interrupted search can continue later.
-
 Labee does not bypass paywalls, authentication, CAPTCHAs, robots restrictions,
 or other access controls.
 
@@ -128,7 +116,7 @@ or other access controls.
 
 Some public supplier pages, including NEB pages, reject server-style requests
 but work in an ordinary visible browser. A locally run Labee instance can use
-`browser: default` on `fetch` or deep search (CLI: `--browser default`). The
+`browser: default` on `fetch` (CLI: `--browser default`). The
 `browser_launch`, `browser_status`, and `browser_close` MCP tools provide an
 explicit one-click lifecycle.
 
@@ -371,7 +359,6 @@ npm run build
 npm run typecheck
 npm test
 npm run health
-npm run test:agent:live -- --loops 1 --limit 1 --browser auto
 ```
 
 ### Main project areas
@@ -380,7 +367,7 @@ npm run test:agent:live -- --loops 1 --limit 1 --browser auto
 | --- | --- |
 | Search and source coverage | `src/search.ts`, `src/journals.ts`, `src/providers/` |
 | Content retrieval | `src/fetch.ts`, `src/fulltext.ts`, `src/extract.ts` |
-| Durable deep search | `src/agent/` |
+| Browser-assisted retrieval | `src/agent/` |
 | MCP and hosted transport | `src/mcp.ts`, `src/http.ts` |
 | Daily reliability checks | `scripts/health-check.mjs`, `.github/workflows/health.yml` |
 | Network context and entitlement | `src/network-context.ts` |

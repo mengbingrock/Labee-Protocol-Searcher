@@ -62,9 +62,6 @@ describe("MCP dispatch", () => {
       "browser_launch",
       "browser_status",
       "browser_close",
-      "deep_search_start",
-      "deep_search_get",
-      "deep_search_cancel",
       "list_sources",
     ]);
     expect(tools[0]!.inputSchema.required).toContain("query");
@@ -293,24 +290,6 @@ describe("MCP dispatch", () => {
       expect(text).toContain(`# ${ids[0]}`);
       expect(text).toContain(`# ${ids[1]}`);
       expect(text).toContain("---");
-    });
-  });
-
-  describe("deep-search tools", () => {
-    it("validates required start/get/cancel arguments without starting network work", async () => {
-      for (const [name, arguments_] of [
-        ["deep_search_start", {}],
-        ["deep_search_get", {}],
-        ["deep_search_cancel", {}],
-      ] as const) {
-        const res = await dispatch({
-          jsonrpc: "2.0",
-          id: 9,
-          method: "tools/call",
-          params: { name, arguments: arguments_ },
-        });
-        expect(res?.result).toMatchObject({ isError: true });
-      }
     });
   });
 });

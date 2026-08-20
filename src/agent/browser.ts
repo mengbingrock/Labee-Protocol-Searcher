@@ -3,8 +3,6 @@ import type {
   BrowserAdapter,
   BrowserEvidence,
   BrowserRequest,
-  BrowserSearchEvidence,
-  BrowserSearchRequest,
 } from "./types.ts";
 import {
   assertLoopbackCdpEndpoint,
@@ -45,7 +43,6 @@ function evidence(
 
 export class CdpBrowserAdapter implements BrowserAdapter {
   readonly id = "playwright-cdp";
-  readonly attemptRoute = "browser-cdp" as const;
   private readonly endpoint: URL;
   private readonly connectOverCdp: ConnectOverCdp | undefined;
   private browser: import("playwright-core").Browser | undefined;
@@ -227,94 +224,6 @@ export class CdpBrowserAdapter implements BrowserAdapter {
     } finally {
       if (!keepPage) await page?.close().catch(() => undefined);
       // Do not close a CDP-attached browser: the endpoint belongs to the operator.
-    }
-  }
-
-  async search(request: BrowserSearchRequest): Promise<BrowserSearchEvidence> {
-    const provenance = { adapter: this.id, route: "semanticscholar-json-xhr" };
-    const state = await this.available();
-    if (!state.available) {
-      return { status: "unavailable", results: [], ...(state.reason ? { detail: state.reason } : {}), provenance };
-    }
-    const connected = await this.connectedBrowser();
-    if (!connected.browser) {
-      return {
-        status: "unavailable",
-        results: [],
-        ...(connected.reason ? { detail: connected.reason } : {}),
-        provenance,
-      };
-    }
-    let page: import("playwright-core").Page | undefined;
-    try {
-      const context = connected.browser.contexts()[0];
-      if (!context) return { status: "unavailable", results: [], detail: "CDP browser has no context", provenance };
-      page = await context.newPage();
-      await page.route("**/*", async (route) => {
-        const req = route.request();
-        if (["image", "media", "font", "websocket"].includes(req.resourceType())) {
-          await route.abort("blockedbyclient");
-          return;
-        }
-        try {
-          const url = new URL(req.url());
-          if (url.protocol !== "https:" || !(url.hostname === "semanticscholar.org" || url.hostname.endsWith(".semanticscholar.org"))) {
-            await route.abort("blockedbyclient");
-            return;
-          }
-          await route.continue();
-        } catch {
-          await route.abort("blockedbyclient");
-        }
-      });
-      const xhr = page.waitForResponse(
-        (res) => res.url() === "https://www.semanticscholar.org/api/1/search" && res.request().method() === "POST",
-        { timeout: request.timeoutMs },
-      );
-      const searchUrl = `https://www.semanticscholar.org/search?q=${encodeURIComponent(`${request.query} ${request.venue}`)}&sort=relevance`;
-      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: request.timeoutMs });
-      const response = await xhr;
-      if (response.status() !== 200) {
-        return { status: response.status() === 403 ? "blocked" : "not-found", results: [], detail: `XHR HTTP ${response.status()}`, provenance };
-      }
-      const body = await response.body();
-      if (body.length > 2 * 1024 * 1024) return { status: "blocked", results: [], detail: "XHR response exceeded 2 MiB", provenance };
-      const payload = JSON.parse(body.toString("utf8")) as {
-        results?: Array<{
-          id?: string;
-          slug?: string;
-          title?: { text?: string };
-          venue?: { text?: string };
-          doiInfo?: { doiUrl?: string };
-          primaryPaperLink?: { url?: string };
-          paperAbstract?: { text?: string };
-          tldr?: { text?: string };
-        }>;
-      };
-      const venue = request.venue.trim().toLowerCase();
-      const results = (payload.results ?? [])
-        .filter((row) => (row.venue?.text ?? "").trim().toLowerCase() === venue)
-        .map((row) => {
-          const title = row.title?.text?.trim() ?? "";
-          const fallback = row.id && row.slug
-            ? `https://www.semanticscholar.org/paper/${encodeURIComponent(row.slug)}/${row.id}`
-            : "";
-          const url = row.doiInfo?.doiUrl ?? row.primaryPaperLink?.url ?? fallback;
-          const snippet = row.paperAbstract?.text ?? row.tldr?.text ?? "";
-          return { title, url, snippet };
-        })
-        .filter((row) => row.title && row.url)
-        .slice(0, request.limit);
-      return {
-        status: results.length > 0 ? "ok" : "not-found",
-        results,
-        provenance: { ...provenance, capturedUrl: response.url() },
-      };
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : "Semantic Scholar browser search failed";
-      return { status: /timeout/i.test(detail) ? "timeout" : "blocked", results: [], detail, provenance };
-    } finally {
-      await page?.close().catch(() => undefined);
     }
   }
 

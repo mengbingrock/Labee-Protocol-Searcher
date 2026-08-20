@@ -20,7 +20,6 @@ import { runHttpServer } from "./http.ts";
 import { search, renderSearch } from "./search.ts";
 import { VENDORS } from "./vendors.ts";
 import { describeNetworkContext, detectNetworkContext } from "./network-context.ts";
-import { deepSearchService } from "./agent/service.ts";
 import { fetchResourceWithBrowser } from "./agent/browser-fetch.ts";
 import { browserAdapterForMode, shutdownDefaultBrowser } from "./agent/default-browser.ts";
 
@@ -152,15 +151,6 @@ async function detectNetwork(): Promise<void> {
   }
 }
 
-async function resumeAgentJobs(): Promise<void> {
-  try {
-    const ids = await deepSearchService().resumeIncompleteJobs();
-    if (ids.length > 0) process.stderr.write(`[labee-protocol-searcher] resumed ${ids.length} deep-search job(s)\n`);
-  } catch (err) {
-    process.stderr.write(`[labee-protocol-searcher] could not resume deep-search jobs: ${err instanceof Error ? err.message : String(err)}\n`);
-  }
-}
-
 if (args.query !== undefined || args.fetchId !== undefined || args.listSources) {
   detectNetwork()
     .then(() => runCli(args))
@@ -171,7 +161,6 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
     });
 } else if (args.http) {
   detectNetwork()
-    .then(() => resumeAgentJobs())
     .then(() => runHttp(args))
     .catch((err) => {
       process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -179,7 +168,6 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
     });
 } else {
   detectNetwork()
-    .then(() => resumeAgentJobs())
     .then(() => runMcpServer())
     .finally(() => shutdownDefaultBrowser())
     .then(() => process.exit(0));
