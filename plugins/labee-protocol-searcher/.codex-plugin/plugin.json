@@ -1,0 +1,36 @@
+{
+  "name": "labee-protocol-searcher",
+  "version": "0.4.1",
+  "description": "Search and retrieve laboratory protocols with Codex integrated-Browser support.",
+  "author": {
+    "name": "Labee",
+    "url": "https://github.com/mengbingrock"
+  },
+  "homepage": "https://github.com/mengbingrock/Labee-Protocol-Searcher#readme",
+  "repository": "https://github.com/mengbingrock/Labee-Protocol-Searcher",
+  "license": "MIT",
+  "keywords": [
+    "laboratory-protocols",
+    "research",
+    "NEB",
+    "MCP"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Labee Protocol Searcher",
+    "shortDescription": "Search protocols with integrated-Browser NEB access.",
+    "longDescription": "Search protocol journals, vendors, and REBASE. NEB search and result capture prefer Codex's integrated Browser, with its separate profile and shared view, then cache rendered content for fetch.",
+    "developerName": "Labee",
+    "category": "Productivity",
+    "capabilities": [
+      "Research",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/mengbingrock/Labee-Protocol-Searcher",
+    "defaultPrompt": [
+      "Find an NEB protocol and retrieve it with Codex's integrated Browser.",
+      "Search protocol journals for an open full-text method."
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "labee",
+  "interface": {
+    "displayName": "Labee"
+  },
+  "plugins": [
+    {
+      "name": "labee-protocol-searcher",
+      "source": {
+        "source": "local",
+        "path": "./plugins/labee-protocol-searcher"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

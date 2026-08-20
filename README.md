@@ -14,6 +14,20 @@ link only.
 It works as a connector for ChatGPT, Claude, Codex, and other assistants that
 support MCP.
 
+## Install the Codex plugin
+
+The public Labee marketplace packages the MCP server with a skill that prefers
+Codex's integrated Browser for NEB search and retrieval.
+
+```bash
+codex plugin marketplace add mengbingrock/Labee-Protocol-Searcher --ref main
+codex plugin add labee-protocol-searcher@labee
+```
+
+Start a new Codex conversation after installation so the plugin's tools and
+skill are loaded. The plugin downloads the pinned public npm release
+`@mengbingrock/labee-protocol-searcher@0.4.1` when its MCP server starts.
+
 ## The problems Labee solves
 
 | What slows researchers down | How Labee helps |

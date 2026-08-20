@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Protocol Searcher"
+  short_description: "Search and retrieve laboratory protocols"
+  default_prompt: "Use $labee-protocol-searcher to find and retrieve an NEB protocol with Codex's integrated Browser."

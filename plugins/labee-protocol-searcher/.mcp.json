@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "labee-protocol-searcher": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@mengbingrock/labee-protocol-searcher@0.4.1"
+      ]
+    }
+  }
+}

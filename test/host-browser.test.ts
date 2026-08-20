@@ -21,6 +21,7 @@ describe("host-browser NEB capture protocol", () => {
     const task = prepareHostBrowserSearch("Golden Gate assembly", 99, emptyBase("Golden Gate assembly"));
     expect(task).toMatchObject({ kind: "neb-search", limit: 10 });
     expect(task.searchUrl).toContain("searchValue=Golden%20Gate%20assembly");
+    expect(task.instructions.join(" ")).toContain("Codex's integrated Browser");
 
     const committed = commitHostBrowserSearch(task.captureId, [{
       title: "Golden Gate Assembly Protocol",

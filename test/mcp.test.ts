@@ -198,7 +198,7 @@ describe("MCP dispatch", () => {
         },
       });
       const fetchedText = (fetched!.result as { content: { text: string }[] }).content[0]!.text;
-      expect(fetchedText).toContain("HTML captured by ChatGPT's built-in Browser during NEB search");
+      expect(fetchedText).toContain("HTML captured by Codex's integrated Browser during NEB search");
       expect(fetchedText).toContain("<h1>Gibson Assembly</h1>");
       expect(fetchedText).toContain("_status: display-only-full-text_");
     });

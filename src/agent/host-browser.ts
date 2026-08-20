@@ -128,9 +128,9 @@ export function prepareHostBrowserSearch(
     limit: normalizedLimit,
     searchUrl,
     instructions: [
-      "Open searchUrl in ChatGPT's built-in Browser.",
+      "Open searchUrl in Codex's integrated Browser.",
       "Read the rendered NEB results; do not replace them with web-search results.",
-      "Open up to limit result links in the same Browser profile and capture main/article HTML when available, otherwise visible text.",
+      "Open up to limit result links in the same integrated Browser profile and capture main/article HTML when available, otherwise visible text.",
       "Call neb_search_commit with captureId and the captured results.",
     ],
   };
@@ -222,7 +222,7 @@ export function fetchHostBrowserCapture(id: string): string | undefined {
   captureCache.set(capture.id, capture);
   if (capture.html) {
     return [
-      `<!-- Source: ${capture.url} — HTML captured by ChatGPT's built-in Browser during NEB search. ` +
+      `<!-- Source: ${capture.url} — HTML captured by Codex's integrated Browser during NEB search. ` +
         "No redistribution licence was detected. -->",
       "",
       capture.html,
@@ -231,7 +231,7 @@ export function fetchHostBrowserCapture(id: string): string | undefined {
     ].join("\n");
   }
   return [
-    `_Source: ${capture.url} (rendered text captured by ChatGPT's built-in Browser during NEB search; ` +
+    `_Source: ${capture.url} (rendered text captured by Codex's integrated Browser during NEB search; ` +
       "raw HTML was not available and no redistribution licence was detected)._",
     "",
     capture.text!,

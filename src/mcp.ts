@@ -135,7 +135,7 @@ export const TOOLS = [
     annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false },
     description:
       "Complete a host-browser NEB search prepared by `search(browser: host)`. Submit only results " +
-      "rendered by the NEB search page, after opening each selected result in the same ChatGPT Browser " +
+      "rendered by the NEB search page, after opening each selected result in the same Codex integrated-Browser " +
       "profile. Labee caches exact HTML when supplied, otherwise rendered visible text; later `fetch` " +
       "calls return that cached capture without another NEB navigation.",
     inputSchema: {
@@ -178,7 +178,7 @@ export const TOOLS = [
       "neb.com, sigmaaldrich.com, emdmillipore.com) refuse automated requests and return their link " +
       "instead — `search` grades each result so you know which to expect. " +
       "After a host-browser NEB search is committed, fetch returns the exact HTML or rendered text captured " +
-      "by that same in-app Browser profile without reopening NEB. Default-profile searches likewise reuse " +
+      "by that same integrated Browser profile without reopening NEB. Default-profile searches likewise reuse " +
       "their captured HTML. Pass " +
       "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
       "enzyme names also work. Every result ends with a `_status: …_` line (ok, entitled-full-text, " +
@@ -208,7 +208,7 @@ export const TOOLS = [
           type: "string",
           enum: ["off", "cdp", "default", "host"],
           description:
-            "Optional browser recovery. `host` reads a capture committed from ChatGPT's Browser; `default` " +
+            "Optional browser recovery. `host` reads a capture committed from Codex's integrated Browser; `default` " +
             "uses normal Chrome; `cdp` connects to PROTOCOLS_BROWSER_CDP_URL; `off` uses native retrieval.",
         },
       },
