@@ -249,7 +249,7 @@ every day. The customer-facing summary from the latest run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-19T05:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-20T05:49Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 ❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
@@ -273,7 +273,7 @@ _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs
 | `star-protocols` | ✅ full | ✅ 12 | ✅ `ok` · Europe PMC |
 | `nature-protocols` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `jove` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
-| `bio-protocol` | ✅ full | ✅ 9 | ✅ `ok` · Europe PMC |
+| `bio-protocol` | ✅ full | ✅ 8 | ✅ `ok` · Europe PMC |
 | `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
 | `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
@@ -295,6 +295,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-20 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-19 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-18 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-17 | ⚠️ 4/7 | ❌ sweep failed | — | `openalex`, `semanticscholar`, `duckduckgo` | — |
