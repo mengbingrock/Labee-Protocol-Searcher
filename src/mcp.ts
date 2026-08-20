@@ -16,14 +16,17 @@ import type { DeepSearchInput } from "./agent/types.ts";
 import { looksLikeEnzymeQuery } from "./rebase.ts";
 import {
   browserHosts,
+  fetchResourceWithChromeSessionFallback,
   fetchResourceWithBrowser,
   fetchResourcesWithBrowser,
 } from "./agent/browser-fetch.ts";
 import { browserAdapterForMode, defaultBrowser } from "./agent/default-browser.ts";
 import {
+  commitChromeSessionFetch,
   commitHostBrowserSearch,
   fetchHostBrowserCapture,
   prepareHostBrowserSearch,
+  type ChromeSessionCaptureInput,
   type HostBrowserCaptureInput,
 } from "./agent/host-browser.ts";
 
@@ -58,7 +61,10 @@ const SERVER_INSTRUCTIONS =
   "captured HTML or visible text. A later fetch of a committed id returns the cached capture without " +
   "reopening NEB. Do not substitute generic web-search results or silently switch to system Chrome, " +
   "browser=default, or CDP. Use those fallbacks only when the integrated Browser is unavailable and " +
-  "the user explicitly authorizes one.";
+  "the user explicitly authorizes one. For journal articles that native retrieval cannot resolve, an " +
+  "explicit fetch(browser=chrome) returns a chromeBrowserTask. Reuse the connected Chrome session without " +
+  "reading cookies, verify the DOI/title, capture article HTML or downloaded-PDF text, and call " +
+  "chrome_fetch_commit. Treat that capture as entitled content, not open-access content.";
 /** Search-to-fetch browser handoff for the lifetime of one local MCP process. */
 const sameProfileBrowserById = new Map<string, "cdp" | "default">();
 
@@ -179,7 +185,9 @@ export const TOOLS = [
       "instead — `search` grades each result so you know which to expect. " +
       "After a host-browser NEB search is committed, fetch returns the exact HTML or rendered text captured " +
       "by that same integrated Browser profile without reopening NEB. Default-profile searches likewise reuse " +
-      "their captured HTML. Pass " +
+      "their captured HTML. Pass `browser: chrome` only after explicit user authorization: if native journal " +
+      "retrieval fails, fetch returns a bounded task for the plugin to reuse the connected Chrome session, and " +
+      "`chrome_fetch_commit` stores verified article HTML or downloaded-PDF text as entitled content. Pass " +
       "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
       "enzyme names also work. Every result ends with a `_status: …_` line (ok, entitled-full-text, " +
       "display-only-full-text, display-only-link, abstract-only, no-open-fulltext, oa-link, " +
@@ -206,12 +214,36 @@ export const TOOLS = [
         },
         browser: {
           type: "string",
-          enum: ["off", "cdp", "default", "host"],
+          enum: ["off", "cdp", "default", "host", "chrome"],
           description:
             "Optional browser recovery. `host` reads a capture committed from Codex's integrated Browser; `default` " +
-            "uses normal Chrome; `cdp` connects to PROTOCOLS_BROWSER_CDP_URL; `off` uses native retrieval.",
+            "uses Labee's AppleScript window; `cdp` connects to PROTOCOLS_BROWSER_CDP_URL; `chrome` prepares an " +
+            "explicit plugin handoff that reuses Codex's connected Chrome session without reading cookies; `off` " +
+            "uses native retrieval.",
         },
       },
+    },
+  },
+  {
+    name: "chrome_fetch_commit",
+    title: "Commit a connected-Chrome article capture",
+    annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false },
+    description:
+      "Complete a journal fallback prepared by `fetch(browser: chrome)`. Submit content only from the explicitly " +
+      "authorized connected Chrome session, after verifying the article DOI/title. The requested `url` must match " +
+      "the task exactly. Labee stores captured article HTML or text extracted from a Chrome-downloaded publisher " +
+      "PDF as `entitled-full-text`; it never labels this material open access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        captureId: { type: "string", description: "Opaque id returned by fetch(browser: chrome)." },
+        title: { type: "string", description: "Article title observed in Chrome or the downloaded PDF." },
+        url: { type: "string", description: "Exact requested URL from chromeBrowserTask.url." },
+        finalUrl: { type: "string", description: "Final publisher or PDF URL after Chrome redirects." },
+        html: { type: "string", description: "Rendered main/article HTML when available." },
+        text: { type: "string", description: "Complete rendered article text or locally extracted PDF text." },
+      },
+      required: ["captureId", "title", "url"],
     },
   },
   {
@@ -420,11 +452,30 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       ...committed.capturedIds.map((id) => `- ${id}: ${committed.formats[id]}`),
     ].join("\n"));
   }
+  if (name === "chrome_fetch_commit") {
+    const captureId = typeof args.captureId === "string" ? args.captureId : "";
+    const title = typeof args.title === "string" ? args.title : "";
+    const url = typeof args.url === "string" ? args.url : "";
+    if (!captureId) return toolText("Error: `captureId` is required.", true);
+    const capture: ChromeSessionCaptureInput = {
+      title,
+      url,
+      ...(typeof args.finalUrl === "string" ? { finalUrl: args.finalUrl } : {}),
+      ...(typeof args.html === "string" ? { html: args.html } : {}),
+      ...(typeof args.text === "string" ? { text: args.text } : {}),
+    };
+    const committed = commitChromeSessionFetch(captureId, capture);
+    return toolText([
+      `Connected-Chrome capture cached for \`${committed.id}\` as ${committed.format}.`,
+      "",
+      committed.content,
+    ].join("\n"));
+  }
   if (name === "fetch") {
     const section = typeof args.section === "string" ? args.section : undefined;
     const opts = section ? { section } : {};
-    const requestedBrowserMode = ["off", "cdp", "default", "host"].includes(String(args.browser))
-      ? (args.browser as "off" | "cdp" | "default" | "host")
+    const requestedBrowserMode = ["off", "cdp", "default", "host", "chrome"].includes(String(args.browser))
+      ? (args.browser as "off" | "cdp" | "default" | "host" | "chrome")
       : undefined;
     const list = Array.isArray(args.ids)
       ? args.ids.filter((x): x is string => typeof x === "string" && x.trim() !== "")
@@ -438,6 +489,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     const browserMode = requestedBrowserMode === "off"
       ? "off"
       : requestedBrowserMode ?? inheritedBrowserMode;
+    if (browserMode === "chrome") {
+      if (list.length === 1) {
+        const captured = fetchHostBrowserCapture(list[0]!);
+        return toolText(captured ?? await fetchResourceWithChromeSessionFallback(list[0]!, opts));
+      }
+      const rows = await Promise.all(list.map(async (id) => ({
+        id,
+        text: fetchHostBrowserCapture(id) ?? await fetchResourceWithChromeSessionFallback(id, opts),
+      })));
+      return toolText(rows.map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+    }
     const browser = browserAdapterForMode(browserMode === "host" ? undefined : browserMode);
     if (list.length === 1) {
       const captured = fetchHostBrowserCapture(list[0]!);

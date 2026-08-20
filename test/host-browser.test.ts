@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  commitChromeSessionFetch,
   commitHostBrowserSearch,
   fetchHostBrowserCapture,
+  prepareChromeSessionFetch,
   prepareHostBrowserSearch,
   resetHostBrowserStateForTests,
 } from "../src/agent/host-browser.ts";
@@ -72,5 +74,61 @@ describe("host-browser NEB capture protocol", () => {
 
     const fetched = fetchHostBrowserCapture(id)!;
     expect(fetched).toContain(`\n\n${html}\n\n_status: display-only-full-text_`);
+  });
+});
+
+describe("connected-Chrome journal fallback", () => {
+  afterEach(() => resetHostBrowserStateForTests());
+
+  it("commits the Nature Protocols PDF case as entitled full text", () => {
+    const id = "doi:10.1038/nprot.2016.055";
+    const task = prepareChromeSessionFetch(
+      id,
+      "https://doi.org/10.1038/nprot.2016.055",
+      "# Gibson assembly protocol\n\nAbstract only.\n\n_status: abstract-only_",
+    );
+    expect(task).toMatchObject({ kind: "chrome-fetch", id });
+    expect(task.instructions.join(" ")).toContain("Do not read, export, or print cookies");
+    expect(task.instructions.join(" ")).toContain("Download PDF");
+
+    const pdfText = [
+      "Gibson assembly protocol",
+      "Nature Protocols doi:10.1038/nprot.2016.055",
+      "This publisher PDF was downloaded by Chrome after the signed-in session exposed the control.",
+      "Materials and methods. Combine the overlapping DNA fragments, master mix, and water.",
+      "Incubate the reaction, transform competent cells, and validate the assembled construct.",
+    ].join("\n");
+    const committed = commitChromeSessionFetch(task.captureId, {
+      title: "Gibson assembly protocol",
+      url: task.url,
+      finalUrl: "https://www.nature.com/articles/nprot.2016.055.pdf",
+      text: pdfText,
+    });
+
+    expect(committed).toMatchObject({ id, format: "rendered-text" });
+    expect(committed.content).toContain("explicitly authorized connected Chrome session");
+    expect(committed.content).toContain("_status: entitled-full-text_");
+    expect(committed.content).not.toContain("open access");
+    expect(fetchHostBrowserCapture(id)).toContain(pdfText);
+  });
+
+  it("binds commits to the exact fallback task URL", () => {
+    const task = prepareChromeSessionFetch(
+      "doi:10.1038/nprot.2016.055",
+      "https://doi.org/10.1038/nprot.2016.055",
+      "# Gibson assembly protocol\n\n_status: abstract-only_",
+    );
+    expect(() => commitChromeSessionFetch(task.captureId, {
+      title: "Gibson assembly protocol",
+      url: "https://doi.org/10.1038/a-different-article",
+      text: "Gibson assembly protocol ".repeat(20),
+    })).toThrow("exactly match");
+
+    expect(() => commitChromeSessionFetch(task.captureId, {
+      title: "Gibson assembly protocol",
+      url: task.url,
+      finalUrl: "https://www.nature.com/articles/nprot.2016.055",
+      text: "Gibson assembly protocol and 10.1038/nprot.2016.055. ".repeat(10),
+    })).not.toThrow();
   });
 });

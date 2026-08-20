@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchResourceWithBrowser } from "../src/agent/browser-fetch.ts";
+import { chromeFallbackUrl, fetchResourceWithBrowser } from "../src/agent/browser-fetch.ts";
 import type { BrowserAdapter, BrowserEvidence, BrowserRequest } from "../src/agent/types.ts";
 
 class NebBrowser implements BrowserAdapter {
@@ -18,6 +18,13 @@ class NebBrowser implements BrowserAdapter {
 }
 
 describe("fetchResourceWithBrowser", () => {
+  it("uses the canonical DOI instead of an unrelated URL found in abstract text", () => {
+    expect(chromeFallbackUrl(
+      "doi:10.1038/nprot.2016.055",
+      "Abstract metadata: https://europepmc.org/article/MED/27120195",
+    )).toBe("https://doi.org/10.1038/nprot.2016.055");
+  });
+
   it("prefers an official NEB protocols.io mirror discovered in the visible page", async () => {
     const fetchImpl = (async (input: string | URL | Request) => {
       const url = String(input);

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import type { UnifiedResponse, UnifiedResult } from "../search.ts";
 
 const TASK_TTL_MS = 10 * 60 * 1_000;
@@ -30,11 +31,41 @@ export interface HostBrowserCommitResult {
   formats: Record<string, "html" | "rendered-text">;
 }
 
+export interface ChromeSessionFetchTask {
+  kind: "chrome-fetch";
+  captureId: string;
+  id: string;
+  url: string;
+  expectedTitle?: string;
+  instructions: string[];
+}
+
+export interface ChromeSessionCaptureInput {
+  title: string;
+  url: string;
+  finalUrl?: string;
+  html?: string;
+  text?: string;
+}
+
+export interface ChromeSessionCommitResult {
+  id: string;
+  format: "html" | "rendered-text";
+  content: string;
+}
+
 interface PendingSearch {
   query: string;
   limit: number;
   searchUrl: string;
   base: UnifiedResponse;
+  createdAt: number;
+}
+
+interface PendingFetch {
+  id: string;
+  url: string;
+  expectedTitle?: string;
   createdAt: number;
 }
 
@@ -45,16 +76,45 @@ interface CachedCapture {
   html?: string;
   text?: string;
   format: "html" | "rendered-text";
+  origin: "neb-integrated-browser" | "chrome-session";
   createdAt: number;
 }
 
 const pendingSearches = new Map<string, PendingSearch>();
+const pendingFetches = new Map<string, PendingFetch>();
 const captureCache = new Map<string, CachedCapture>();
 
 function cleanExpired(now = Date.now()): void {
   for (const [id, pending] of pendingSearches) {
     if (now - pending.createdAt > TASK_TTL_MS) pendingSearches.delete(id);
   }
+  for (const [id, pending] of pendingFetches) {
+    if (now - pending.createdAt > TASK_TTL_MS) pendingFetches.delete(id);
+  }
+}
+
+function publicHttpsUrl(raw: string, field: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${field} is invalid`);
+  }
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new Error(`${field} must be credential-free HTTPS`);
+  }
+  if (
+    !host ||
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    isIP(host.replace(/^\[|\]$/g, "")) !== 0
+  ) {
+    throw new Error(`${field} must use a public hostname`);
+  }
+  return url;
 }
 
 function nebUrl(raw: string): URL {
@@ -179,6 +239,7 @@ export function commitHostBrowserSearch(
       ...(html ? { html } : {}),
       ...(text ? { text } : {}),
       format,
+      origin: "neb-integrated-browser",
       createdAt: Date.now(),
     });
     results.push({
@@ -215,11 +276,121 @@ export function commitHostBrowserSearch(
   return { response, capturedIds, formats };
 }
 
+function expectedTitleFromNative(nativeText: string): string | undefined {
+  const heading = nativeText.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  return heading || undefined;
+}
+
+function normalizedDoi(id: string): string | undefined {
+  const raw = id.trim().replace(/^doi:\s*/i, "");
+  const match = /^(10\.\d{4,9}\/\S+)$/i.exec(raw);
+  return match?.[1]?.replace(/[.,;]+$/, "").toLowerCase();
+}
+
+function titleLooksRelated(expected: string | undefined, actual: string): boolean {
+  if (!expected) return true;
+  const tokens = (value: string) => new Set(
+    value.toLowerCase().match(/[a-z0-9]{4,}/g) ?? [],
+  );
+  const wanted = tokens(expected);
+  if (wanted.size === 0) return true;
+  const observed = tokens(actual);
+  let overlap = 0;
+  for (const token of wanted) if (observed.has(token)) overlap += 1;
+  return overlap / wanted.size >= 0.5;
+}
+
+export function prepareChromeSessionFetch(
+  id: string,
+  url: string,
+  nativeText: string,
+): ChromeSessionFetchTask {
+  cleanExpired();
+  const requested = publicHttpsUrl(url, "fallback URL").toString();
+  const captureId = randomUUID();
+  const expectedTitle = expectedTitleFromNative(nativeText);
+  pendingFetches.set(captureId, {
+    id: id.trim(),
+    url: requested,
+    ...(expectedTitle ? { expectedTitle } : {}),
+    createdAt: Date.now(),
+  });
+  return {
+    kind: "chrome-fetch",
+    captureId,
+    id: id.trim(),
+    url: requested,
+    ...(expectedTitle ? { expectedTitle } : {}),
+    instructions: [
+      "Use Codex's connected Chrome session only because the user explicitly authorized this fallback.",
+      "Reuse an already-open matching article tab when possible; otherwise open url in that same Chrome session.",
+      "Do not read, export, or print cookies. Chrome sends its own session state to the publisher.",
+      "Verify the DOI and title, then capture main/article HTML or complete rendered text.",
+      "If the publisher exposes only a Download PDF control, download it through Chrome and extract its text locally.",
+      "Call chrome_fetch_commit with captureId, the requested url, finalUrl, title, and captured html or text.",
+    ],
+  };
+}
+
+export function commitChromeSessionFetch(
+  captureId: string,
+  raw: ChromeSessionCaptureInput,
+): ChromeSessionCommitResult {
+  cleanExpired();
+  const pending = pendingFetches.get(captureId);
+  if (!pending) throw new Error("captureId is invalid or expired; call fetch with browser=chrome again");
+  const requested = publicHttpsUrl(raw.url, "url");
+  if (requested.toString() !== pending.url) {
+    throw new Error("url must exactly match the Chrome fallback task URL");
+  }
+  const final = raw.finalUrl ? publicHttpsUrl(raw.finalUrl, "finalUrl") : requested;
+  const title = boundedString(raw.title, "title", true)!;
+  const html = boundedString(raw.html, "html", false, true);
+  const text = boundedString(raw.text, "text", false, true);
+  if (!html && !text) throw new Error("Chrome capture must include html or text");
+  const body = `${html ?? ""}\n${text ?? ""}`;
+  if (body.trim().length < 200) throw new Error("Chrome capture is too short to be article full text");
+
+  const doi = normalizedDoi(pending.id);
+  let identityUrl = final.toString();
+  try {
+    identityUrl = decodeURIComponent(identityUrl);
+  } catch {
+    // A valid URL may still contain a literal percent. The undecoded form is
+    // sufficient for title matching and most DOI URLs.
+  }
+  const identityText = `${identityUrl}\n${title}\n${body}`.toLowerCase();
+  const doiMatches = doi ? identityText.includes(doi) || identityText.includes(doi.split("/")[1]!) : false;
+  if (!doiMatches && !titleLooksRelated(pending.expectedTitle, title)) {
+    throw new Error("Chrome capture title/DOI does not match the requested article");
+  }
+
+  const format = html ? "html" : "rendered-text";
+  cacheCapture({
+    id: pending.id,
+    url: final.toString(),
+    title,
+    ...(html ? { html } : {}),
+    ...(text ? { text } : {}),
+    format,
+    origin: "chrome-session",
+    createdAt: Date.now(),
+  });
+  pendingFetches.delete(captureId);
+  return { id: pending.id, format, content: fetchHostBrowserCapture(pending.id)! };
+}
+
 export function fetchHostBrowserCapture(id: string): string | undefined {
   const capture = captureCache.get(id.trim());
   if (!capture) return undefined;
   captureCache.delete(capture.id);
   captureCache.set(capture.id, capture);
+  if (capture.origin === "chrome-session") {
+    const source = capture.html
+      ? `<!-- Source: ${capture.url} — entitled publisher HTML captured through the user's explicitly authorized connected Chrome session. Access and redistribution remain governed by the publisher or subscription terms. -->`
+      : `_Source: ${capture.url} (entitled publisher text captured through the user's explicitly authorized connected Chrome session; access and redistribution remain governed by the publisher or subscription terms)._`;
+    return [source, "", capture.html ?? capture.text!, "", "_status: entitled-full-text_"].join("\n");
+  }
   if (capture.html) {
     return [
       `<!-- Source: ${capture.url} — HTML captured by Codex's integrated Browser during NEB search. ` +
@@ -242,5 +413,6 @@ export function fetchHostBrowserCapture(id: string): string | undefined {
 
 export function resetHostBrowserStateForTests(): void {
   pendingSearches.clear();
+  pendingFetches.clear();
   captureCache.clear();
 }

@@ -1,7 +1,7 @@
 {
   "name": "labee-protocol-searcher",
-  "version": "0.4.1",
-  "description": "Search and retrieve laboratory protocols with Codex integrated-Browser support.",
+  "version": "0.4.2",
+  "description": "Search and retrieve laboratory protocols with integrated-Browser and explicit connected-Chrome fallbacks.",
   "author": {
     "name": "Labee",
     "url": "https://github.com/mengbingrock"
@@ -19,8 +19,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Labee Protocol Searcher",
-    "shortDescription": "Search protocols with integrated-Browser NEB access.",
-    "longDescription": "Search protocol journals, vendors, and REBASE. NEB search and result capture prefer Codex's integrated Browser, with its separate profile and shared view, then cache rendered content for fetch.",
+    "shortDescription": "Search protocols with safe browser-assisted retrieval.",
+    "longDescription": "Search protocol journals, vendors, and REBASE. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies and caches publisher content as entitled full text.",
     "developerName": "Labee",
     "category": "Productivity",
     "capabilities": [
@@ -30,7 +30,8 @@
     "websiteURL": "https://github.com/mengbingrock/Labee-Protocol-Searcher",
     "defaultPrompt": [
       "Find an NEB protocol and retrieve it with Codex's integrated Browser.",
-      "Search protocol journals for an open full-text method."
+      "Search protocol journals for an open full-text method.",
+      "Fetch a journal article, reusing my connected Chrome session only if native retrieval fails."
     ]
   }
 }

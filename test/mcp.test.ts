@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { dispatch, TOOLS } from "../src/mcp.ts";
 import * as search from "../src/search.ts";
-import { resetHostBrowserStateForTests } from "../src/agent/host-browser.ts";
+import {
+  prepareChromeSessionFetch,
+  resetHostBrowserStateForTests,
+} from "../src/agent/host-browser.ts";
 
 describe("MCP dispatch", () => {
   it("answers initialize with protocol version and tool capability", async () => {
@@ -55,6 +58,7 @@ describe("MCP dispatch", () => {
       "search",
       "neb_search_commit",
       "fetch",
+      "chrome_fetch_commit",
       "browser_launch",
       "browser_status",
       "browser_close",
@@ -66,6 +70,8 @@ describe("MCP dispatch", () => {
     expect(tools[0]!.inputSchema.required).toContain("query");
     expect(TOOLS.find((tool) => tool.name === "fetch")?.inputSchema.properties.browser.enum)
       .toContain("default");
+    expect(TOOLS.find((tool) => tool.name === "fetch")?.inputSchema.properties.browser.enum)
+      .toContain("chrome");
     expect(TOOLS.find((tool) => tool.name === "search")?.inputSchema.properties.browser.enum)
       .toContain("default");
     expect(TOOLS.find((tool) => tool.name === "search")?.inputSchema.properties.browser.enum)
@@ -228,6 +234,46 @@ describe("MCP dispatch", () => {
         params: { name: "fetch", arguments: {} },
       });
       expect(res?.result).toMatchObject({ isError: true });
+    });
+
+    it("commits connected-Chrome PDF text and serves it from the original DOI", async () => {
+      const id = "doi:10.1038/nprot.2016.055";
+      const task = prepareChromeSessionFetch(
+        id,
+        "https://doi.org/10.1038/nprot.2016.055",
+        "# Gibson assembly protocol\n\n_status: abstract-only_",
+      );
+      const text = "Gibson assembly protocol doi:10.1038/nprot.2016.055. " +
+        "Materials, reaction setup, incubation, transformation, and validation steps. ".repeat(5);
+      const committed = await dispatch({
+        jsonrpc: "2.0",
+        id: 71,
+        method: "tools/call",
+        params: {
+          name: "chrome_fetch_commit",
+          arguments: {
+            captureId: task.captureId,
+            title: "Gibson assembly protocol",
+            url: task.url,
+            finalUrl: "https://www.nature.com/articles/nprot.2016.055.pdf",
+            text,
+          },
+        },
+      });
+      const committedText = (committed!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(committedText).toContain("Connected-Chrome capture cached");
+      expect(committedText).toContain("_status: entitled-full-text_");
+
+      const fetched = await dispatch({
+        jsonrpc: "2.0",
+        id: 72,
+        method: "tools/call",
+        params: { name: "fetch", arguments: { id } },
+      });
+      const fetchedText = (fetched!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(fetchedText).toContain(text);
+      expect(fetchedText).toContain("_status: entitled-full-text_");
+      resetHostBrowserStateForTests();
     });
 
     it("fetches a batch of ids into one response, each under its own header", async () => {

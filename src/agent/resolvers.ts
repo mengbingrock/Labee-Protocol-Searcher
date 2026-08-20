@@ -83,6 +83,7 @@ export function betterStatus(current: FetchStatus, candidate: FetchStatus): Fetc
     "interaction-required": 35,
     timeout: 20,
     "browser-unavailable": 25,
+    "chrome-browser-required": 45,
     "not-found": 20,
     error: 10,
     "bad-id": 5,

@@ -1,5 +1,6 @@
 import { fetchResource, fetchResources, type FetchOptions, type FetchRow } from "../fetch.ts";
 import { extractHttpUrls, isVerifiedStatus, parseFetchStatus } from "./resolvers.ts";
+import { prepareChromeSessionFetch } from "./host-browser.ts";
 import type { BrowserAdapter } from "./types.ts";
 
 function withStatus(text: string, status: string): string {
@@ -11,6 +12,37 @@ function requestedUrl(id: string, nativeText: string): string | undefined {
   const candidate = raw.toLowerCase().startsWith("url:") ? raw.slice(4).trim() : raw;
   if (/^https?:\/\//i.test(candidate)) return candidate;
   return extractHttpUrls(nativeText)[0];
+}
+
+export function chromeFallbackUrl(id: string, nativeText: string): string | undefined {
+  const raw = id.trim();
+  const withoutPrefix = raw.replace(/^doi:\s*/i, "");
+  const doi = /^(10\.\d{4,9}\/\S+)$/i.exec(withoutPrefix)?.[1]?.replace(/[.,;]+$/, "");
+  if (doi) return `https://doi.org/${doi}`;
+  const pmcid = raw.replace(/^pmcid:\s*/i, "").match(/^(PMC\d+)$/i)?.[1];
+  if (pmcid) return `https://pmc.ncbi.nlm.nih.gov/articles/${pmcid.toUpperCase()}/`;
+  const pmid = raw.replace(/^pmid:\s*/i, "").match(/^(\d{5,10})$/)?.[1];
+  if (pmid) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+  return requestedUrl(id, nativeText);
+}
+
+export async function fetchResourceWithChromeSessionFallback(
+  id: string,
+  opts: FetchOptions = {},
+): Promise<string> {
+  const nativeText = await fetchResource(id, opts);
+  if (isVerifiedStatus(parseFetchStatus(nativeText))) return nativeText;
+  const url = chromeFallbackUrl(id, nativeText);
+  if (!url) return nativeText;
+  const task = prepareChromeSessionFetch(id, url, nativeText);
+  return [
+    nativeText,
+    "",
+    "_status: chrome-browser-required_",
+    "",
+    "chromeBrowserTask:",
+    JSON.stringify(task, null, 2),
+  ].join("\n");
 }
 
 export function sourceForUrl(url: URL): string {

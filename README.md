@@ -89,6 +89,7 @@ it. Predictions are computed fresh for each search and shared with nobody.
 | `abstract-only` | Only the abstract was retrieved; no public open full text was found at retrieval time. |
 | `not-found` / `not-fetchable` | Not indexed, or the site refused automated reading. |
 | `interaction-required` | Labee opened its dedicated Chrome window, but a human verification page still needs your attention; complete it and retry. |
+| `chrome-browser-required` | Native retrieval stopped short of full text and an explicitly authorized connected-Chrome capture task is ready for the Codex plugin. |
 
 ### Network context
 
@@ -173,6 +174,24 @@ host Browser. Labee does not silently switch to system Chrome. Use
 `browser: default` or `cdp` only when the integrated Browser is unavailable and
 the user explicitly authorizes that fallback; other clients can still use
 native retrieval.
+
+### Connected-Chrome journal fallback
+
+When normal DOI/PMID retrieval returns only an abstract or link, the Codex
+plugin can reuse the user's already connected Chrome session as an explicit
+fallback. Call `fetch` with `browser: chrome`; if native retrieval is still
+unresolved, Labee returns a short-lived `chromeBrowserTask`. The plugin reuses a
+matching open article tab or opens the task's canonical URL, verifies the
+DOI/title, and submits complete article HTML or text extracted from a PDF
+downloaded through Chrome via `chrome_fetch_commit`.
+
+Chrome applies its own signed-in session state; Labee never asks the plugin to
+read, export, or print cookies. A committed publisher capture is labelled
+`entitled-full-text`, never open access, and remains subject to the publisher or
+subscription terms. The task uses the canonical DOI URL rather than an
+incidental URL found in abstract metadata—specifically guarding the successful
+`10.1038/nprot.2016.055` workflow. This fallback is used only after explicit
+user authorization and only in a host that exposes a connected Chrome session.
 
 ## Sources covered
 

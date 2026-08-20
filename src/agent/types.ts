@@ -22,7 +22,8 @@ export type FetchStatus =
   | "interaction-required"
   | "timeout"
   | "unsafe-url"
-  | "browser-unavailable";
+  | "browser-unavailable"
+  | "chrome-browser-required";
 
 export type AttemptRoute =
   | "native-fetch"

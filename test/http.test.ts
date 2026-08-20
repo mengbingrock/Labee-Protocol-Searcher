@@ -54,6 +54,7 @@ describe("MCP Streamable HTTP transport", () => {
       "browser_close",
       "browser_launch",
       "browser_status",
+      "chrome_fetch_commit",
       "deep_search_cancel",
       "deep_search_get",
       "deep_search_start",
