@@ -284,7 +284,7 @@ export async function extractOaContent(
 // Phrases that only ever appear on a challenge/interstitial page, never in an
 // article. Kept narrow on purpose: a false positive silently hides real content.
 const BOT_WALL_RE =
-  /checking your browser before accessing|just a moment\.\.\.|enable javascript and cookies to continue|verifying you are (a )?human|request unsuccessful\.\s*incapsula|attention required!\s*\|\s*cloudflare|not automatically redirected after \d+ seconds|please (enable|turn on) (javascript|cookies) to (continue|proceed)/i;
+  /checking your browser before accessing|just a moment(?:\.\.\.)?|performing security verification|verify (?:you are|that you are) human|enable javascript and cookies to continue|verifying you are (a )?human|request unsuccessful\.\s*incapsula|attention required!\s*\|\s*cloudflare|not automatically redirected after \d+ seconds|please (enable|turn on) (javascript|cookies) to (continue|proceed)/i;
 
 // `citation_pdf_url` is the Google Scholar indexing convention and is emitted by
 // most publishers (Nature, Elsevier, Wiley, Springer). Attribute order varies, so

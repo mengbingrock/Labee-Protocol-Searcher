@@ -213,11 +213,12 @@ async function recover(
   if (spec.browser === "off" || !deps.browser || progress.browserPages >= spec.maxBrowserPages) {
     return { status, route, content, attemptedUrls };
   }
+  const browserRoute = deps.browser.attemptRoute ?? "browser-cdp";
   const browserState = await deps.browser.available();
   if (!browserState.available) {
     await recordAttempt(deps.store, jobId, {
       ts: nowIso(deps), iteration, keyword, resultId: result.id, source: result.source,
-      route: "browser-cdp", status: "browser-unavailable", elapsedMs: 0, contentChars: 0,
+      route: browserRoute, status: "browser-unavailable", elapsedMs: 0, contentChars: 0,
       adapter: deps.browser.id,
       ...(browserState.reason ? { detail: browserState.reason } : {}),
     });
@@ -246,15 +247,15 @@ async function recover(
     });
     const browserStatus: FetchStatus =
       hit.status === "ok" &&
-      nativeStatus === "display-only-link" &&
-      /\/articles\/PMC\d+/i.test(url)
+      (result.kind === "vendor-page" ||
+        (nativeStatus === "display-only-link" && /\/articles\/PMC\d+/i.test(url)))
         ? "display-only-full-text"
         : hit.status === "unavailable"
           ? "browser-unavailable"
           : hit.status;
     await recordAttempt(deps.store, jobId, {
       ts: nowIso(deps), iteration, keyword, resultId: result.id, source: result.source,
-      route: "browser-cdp", status: browserStatus, elapsedMs: Date.now() - started,
+      route: browserRoute, status: browserStatus, elapsedMs: Date.now() - started,
       contentChars: hit.text?.length ?? 0, url,
       adapter: hit.provenance.adapter,
       provenanceRoute: hit.provenance.route,
@@ -265,7 +266,7 @@ async function recover(
     const best = betterStatus(status, browserStatus);
     if (best !== status) {
       status = best;
-      route = "browser-cdp";
+      route = browserRoute;
       if (
         browserStatus === "ok" ||
         browserStatus === "display-only-full-text"

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { CdpBrowserAdapter } from "../src/agent/browser.ts";
+import { browserAdapterForMode } from "../src/agent/default-browser.ts";
 import { runDeepSearchJob } from "../src/agent/runner.ts";
 import { normalizeDeepSearchInput } from "../src/agent/service.ts";
 import { FileJobStore } from "../src/agent/store.ts";
@@ -14,7 +14,7 @@ const WEB_BACKENDS = ["brave", "google", "duckduckgo"];
 interface Args {
   loops: number;
   limit: number;
-  browser: "auto" | "off" | "cdp";
+  browser: "auto" | "off" | "cdp" | "default";
   sources?: string[];
   out: string;
 }
@@ -35,7 +35,9 @@ function args(argv: string[]): Args {
   }
   if (!Number.isInteger(out.loops) || out.loops < 1 || out.loops > 4) throw new Error("--loops must be 1..4");
   if (!Number.isInteger(out.limit) || out.limit < 1 || out.limit > 10) throw new Error("--limit must be 1..10");
-  if (!["auto", "off", "cdp"].includes(out.browser)) throw new Error("--browser must be auto, off, or cdp");
+  if (!["auto", "off", "cdp", "default"].includes(out.browser)) {
+    throw new Error("--browser must be auto, off, cdp, or default");
+  }
   return out;
 }
 
@@ -91,7 +93,7 @@ async function main(): Promise<void> {
   if (!options.sources && (expectedNativeBackendIds.size !== 55 || expectedBrowserBackendIds.size !== 5)) {
     throw new Error("Source catalog no longer matches the all-source 55 native + 5 browser backend invariant");
   }
-  const browser = options.browser === "off" ? undefined : new CdpBrowserAdapter();
+  const browser = browserAdapterForMode(options.browser);
   const summaries: unknown[] = [];
 
   for (let loop = 1; loop <= options.loops; loop++) {
