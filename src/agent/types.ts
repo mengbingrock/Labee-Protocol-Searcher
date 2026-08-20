@@ -19,6 +19,7 @@ export type FetchStatus =
   | "empty"
   | "unavailable"
   | "blocked"
+  | "interaction-required"
   | "timeout"
   | "unsafe-url"
   | "browser-unavailable";
@@ -29,7 +30,8 @@ export type AttemptRoute =
   | "deterministic-pdf"
   | "publisher-url"
   | "search-backend"
-  | "browser-cdp";
+  | "browser-cdp"
+  | "browser-default";
 
 export interface DeepSearchInput {
   query: string;
@@ -40,7 +42,7 @@ export interface DeepSearchInput {
   maxSeconds?: number;
   maxBrowserPages?: number;
   maxBrowserSearchPages?: number;
-  browser?: "auto" | "off" | "cdp";
+  browser?: "auto" | "off" | "cdp" | "default";
 }
 
 export interface DeepSearchSpec {
@@ -52,7 +54,7 @@ export interface DeepSearchSpec {
   maxSeconds: number;
   maxBrowserPages: number;
   maxBrowserSearchPages: number;
-  browser: "auto" | "off" | "cdp";
+  browser: "auto" | "off" | "cdp" | "default";
   createdAt: string;
 }
 
@@ -123,6 +125,7 @@ export interface JobSnapshot {
 export type BrowserEvidenceStatus =
   | "ok"
   | "blocked"
+  | "interaction-required"
   | "not-found"
   | "unsafe-url"
   | "timeout"
@@ -134,6 +137,8 @@ export interface BrowserRequest {
   allowedHosts: string[];
   maxChars: number;
   timeoutMs: number;
+  /** Extra time for a user to complete a visible anti-bot challenge. */
+  interactionTimeoutMs?: number;
   signal?: AbortSignal;
 }
 
@@ -142,6 +147,9 @@ export interface BrowserEvidence {
   finalUrl?: string;
   title?: string;
   text?: string;
+  /** Rendered content HTML captured from article/main/body in the browser. */
+  html?: string;
+  links?: string[];
   format?: "dom" | "json-xhr" | "pdf";
   detail?: string;
   provenance: { adapter: string; route: string; capturedUrl?: string };
@@ -164,6 +172,8 @@ export interface BrowserSearchEvidence {
 
 export interface BrowserAdapter {
   readonly id: string;
+  /** Durable attempt route; omitted adapters retain the legacy CDP route. */
+  readonly attemptRoute?: "browser-cdp" | "browser-default";
   available(): Promise<{ available: boolean; reason?: string }>;
   retrieve(request: BrowserRequest): Promise<BrowserEvidence>;
   search?(request: BrowserSearchRequest): Promise<BrowserSearchEvidence>;

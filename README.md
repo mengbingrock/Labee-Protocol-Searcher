@@ -69,11 +69,12 @@ it. Predictions are computed fresh for each search and shared with nobody.
 | --- | --- |
 | `ok` | Readable protocol content from an open-access source. |
 | `entitled-full-text` | The publisher’s own copy, read under your institution’s subscription. **Not open access** — that subscription’s terms govern what you may do with it. |
-| `display-only-full-text` | A PMC copy that is free to read but sits outside the Open Access Subset — the publisher granted display rights, not a redistribution licence. Read it; don’t republish it. |
+| `display-only-full-text` | Readable text from a public page without a detected redistribution licence (including PMC copies outside the Open Access Subset). Read it; don’t republish it. |
 | `display-only-link` | A free-to-read PMC copy exists, but its publisher has not licensed machine-readable redistribution; open the supplied PMC link in a browser. |
 | `oa-link` | No machine-readable text, but a legal open copy was found and linked. |
 | `abstract-only` | Only the abstract was retrieved; no public open full text was found at retrieval time. |
 | `not-found` / `not-fetchable` | Not indexed, or the site refused automated reading. |
+| `interaction-required` | Labee opened its dedicated Chrome window, but a human verification page still needs your attention; complete it and retry. |
 
 ### Network context
 
@@ -107,6 +108,57 @@ For complex requests, Labee’s deep-search mode:
 
 Labee does not bypass paywalls, authentication, CAPTCHAs, robots restrictions,
 or other access controls.
+
+### Optional default-profile browser for local Labee
+
+Some public supplier pages, including NEB pages, reject server-style requests
+but work in an ordinary visible browser. A locally run Labee instance can use
+`browser: default` on `fetch` or deep search (CLI: `--browser default`). The
+`browser_launch`, `browser_status`, and `browser_close` MCP tools provide an
+explicit one-click lifecycle.
+
+Default mode uses one dedicated window in the user's normal Google Chrome
+profile, so it shares the cookies and verification state that already work in
+Chrome. It does not enable CDP, enumerate or inspect existing tabs, or close any
+window except the one it created. In Chrome, first enable **View > Developer >
+Allow JavaScript from Apple Events**. If a verification page appears, Labee
+waits briefly for you to complete it; it never solves or bypasses the check. For
+NEB, Labee prefers an official protocols.io protocol linked from the supplier
+page. Otherwise browser-readable publisher text is labelled
+`display-only-full-text`.
+
+This mode currently requires macOS, Google Chrome, macOS Automation permission,
+and a trusted local MCP process; it is not intended for the hosted service.
+Operator-managed CDP remains available as `browser: cdp` via
+`PROTOCOLS_BROWSER_CDP_URL`.
+
+For NEB, `search` also accepts `browser: default`. Labee opens each returned
+NEB page in its dedicated window and retains the rendered content HTML. A following
+`fetch` of the result ID automatically reuses the same profile and returns the
+captured HTML as `display-only-full-text`; it does not request the NEB page a
+second time. An explicit `browser: off` disables this handoff.
+
+### Codex integrated Browser
+
+For most browser tasks, prefer Codex's integrated Browser. It keeps browsing
+inside Codex, uses a separate profile, and provides a shared view. It is
+especially suitable for public websites, research, and localhost testing.
+
+When Labee is installed as a Codex plugin, use `browser: host` for NEB.
+The initial `search` returns a `hostBrowserTask` instead of using a server-side
+web-search provider for NEB. The bundled skill opens NEB's rendered search page
+in the integrated Browser, opens selected results in that same Browser
+profile, and submits their exact main/article HTML (or rendered-text fallback)
+through `neb_search_commit`. The commit returns normal result IDs and caches the
+captures, so a subsequent `fetch` returns the captured content without another
+NEB navigation.
+
+This is an agent-orchestrated handoff: an MCP subprocess cannot invoke another
+host tool by itself. The plugin skill coordinates the Labee MCP tools and the
+host Browser. Labee does not silently switch to system Chrome. Use
+`browser: default` or `cdp` only when the integrated Browser is unavailable and
+the user explicitly authorizes that fallback; other clients can still use
+native retrieval.
 
 ## Sources covered
 

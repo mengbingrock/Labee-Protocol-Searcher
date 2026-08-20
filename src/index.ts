@@ -18,10 +18,11 @@ import "./env.ts"; // load .env (side effect) before any env-reading module.
 import { runMcpServer } from "./mcp.ts";
 import { runHttpServer } from "./http.ts";
 import { search, renderSearch } from "./search.ts";
-import { fetchResource } from "./fetch.ts";
 import { VENDORS } from "./vendors.ts";
 import { describeNetworkContext, detectNetworkContext } from "./network-context.ts";
 import { deepSearchService } from "./agent/service.ts";
+import { fetchResourceWithBrowser } from "./agent/browser-fetch.ts";
+import { browserAdapterForMode, shutdownDefaultBrowser } from "./agent/default-browser.ts";
 
 interface CliArgs {
   query?: string;
@@ -33,6 +34,7 @@ interface CliArgs {
   http: boolean;
   port?: number;
   host?: string;
+  browser?: "off" | "cdp" | "default";
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -49,6 +51,13 @@ function parseArgs(argv: string[]): CliArgs {
     else if (a === "--http") out.http = true;
     else if (a === "--port") out.port = Number(argv[++i]);
     else if (a === "--host") out.host = argv[++i] ?? "";
+    else if (a === "--browser") {
+      const mode = argv[++i] ?? "";
+      if (mode !== "off" && mode !== "cdp" && mode !== "default") {
+        throw new Error("--browser must be one of: off, cdp, default");
+      }
+      out.browser = mode;
+    }
     else if (a && !a.startsWith("-") && out.query === undefined) out.query = a;
   }
   return out;
@@ -103,7 +112,8 @@ async function runCli(args: CliArgs): Promise<void> {
   }
 
   if (args.fetchId !== undefined) {
-    process.stdout.write((await fetchResource(args.fetchId)) + "\n");
+    const browser = browserAdapterForMode(args.browser);
+    process.stdout.write((await fetchResourceWithBrowser(args.fetchId, {}, browser)) + "\n");
     return;
   }
 
@@ -117,6 +127,12 @@ async function runCli(args: CliArgs): Promise<void> {
 }
 
 const args = parseArgs(process.argv.slice(2));
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void shutdownDefaultBrowser().finally(() => process.exit(0));
+  });
+}
 
 /**
  * First step in every mode: establish what kind of network we are on. Entitlement
@@ -148,6 +164,7 @@ async function resumeAgentJobs(): Promise<void> {
 if (args.query !== undefined || args.fetchId !== undefined || args.listSources) {
   detectNetwork()
     .then(() => runCli(args))
+    .finally(() => shutdownDefaultBrowser())
     .catch((err) => {
       process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exit(1);
@@ -164,5 +181,6 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
   detectNetwork()
     .then(() => resumeAgentJobs())
     .then(() => runMcpServer())
+    .finally(() => shutdownDefaultBrowser())
     .then(() => process.exit(0));
 }

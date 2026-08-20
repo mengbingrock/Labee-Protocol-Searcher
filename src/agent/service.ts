@@ -1,4 +1,4 @@
-import { CdpBrowserAdapter } from "./browser.ts";
+import { browserAdapterForMode } from "./default-browser.ts";
 import { runDeepSearchJob, type AgentDependencies } from "./runner.ts";
 import { FileJobStore } from "./store.ts";
 import type { DeepSearchInput, DeepSearchSpec, JobProgress, JobSnapshot, JobStore } from "./types.ts";
@@ -62,7 +62,7 @@ export class DeepSearchService {
   private async run(id: string, signal: AbortSignal): Promise<void> {
     try {
       const spec = await this.store.readSpec(id);
-      const browser = this.dependencies.browser ?? (spec.browser === "off" ? undefined : new CdpBrowserAdapter());
+      const browser = this.dependencies.browser ?? browserAdapterForMode(spec.browser);
       await runDeepSearchJob(id, {
         store: this.store,
         ...this.dependencies,

@@ -51,11 +51,15 @@ describe("MCP Streamable HTTP transport", () => {
     const res = await post({ jsonrpc: "2.0", id: 2, method: "tools/list" });
     const body = (await res.json()) as { result: { tools: { name: string }[] } };
     expect(body.result.tools.map((t) => t.name).sort()).toEqual([
+      "browser_close",
+      "browser_launch",
+      "browser_status",
       "deep_search_cancel",
       "deep_search_get",
       "deep_search_start",
       "fetch",
       "list_sources",
+      "neb_search_commit",
       "search",
     ]);
   });

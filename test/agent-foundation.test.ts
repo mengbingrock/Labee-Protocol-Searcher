@@ -218,6 +218,38 @@ describe("CDP discovery", () => {
       await close(server);
     }
   });
+
+  it("closes a Labee-owned CDP browser", async () => {
+    const server = createServer((_req, res) => {
+      const port = (server.address() as AddressInfo).port;
+      res.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/test-id` }));
+    });
+    const port = await listen(server);
+    let closeCalls = 0;
+    const fakeBrowser = {
+      isConnected: () => true,
+      contexts: () => [],
+      close: async () => { closeCalls++; },
+    } as unknown as import("playwright-core").Browser;
+    try {
+      const adapter = new CdpBrowserAdapter(
+        `http://127.0.0.1:${port}`,
+        async () => fakeBrowser,
+        true,
+      );
+      await adapter.retrieve({
+        url: "https://93.184.216.34/article",
+        sourceId: "fixture",
+        allowedHosts: ["93.184.216.34"],
+        maxChars: 1_000,
+        timeoutMs: 1_000,
+      });
+      await adapter.close();
+      expect(closeCalls).toBe(1);
+    } finally {
+      await close(server);
+    }
+  });
 });
 
 describe("browser evidence classification", () => {

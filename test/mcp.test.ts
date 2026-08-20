@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { dispatch, TOOLS } from "../src/mcp.ts";
 import * as search from "../src/search.ts";
+import { resetHostBrowserStateForTests } from "../src/agent/host-browser.ts";
 
 describe("MCP dispatch", () => {
   it("answers initialize with protocol version and tool capability", async () => {
@@ -10,6 +11,7 @@ describe("MCP dispatch", () => {
       protocolVersion: expect.any(String),
       capabilities: { tools: {} },
       serverInfo: { name: "labee-protocol-searcher" },
+      instructions: expect.stringContaining("browser=host"),
     });
   });
 
@@ -51,13 +53,38 @@ describe("MCP dispatch", () => {
     const tools = (res!.result as { tools: typeof TOOLS }).tools;
     expect(tools.map((t) => t.name)).toEqual([
       "search",
+      "neb_search_commit",
       "fetch",
+      "browser_launch",
+      "browser_status",
+      "browser_close",
       "deep_search_start",
       "deep_search_get",
       "deep_search_cancel",
       "list_sources",
     ]);
     expect(tools[0]!.inputSchema.required).toContain("query");
+    expect(TOOLS.find((tool) => tool.name === "fetch")?.inputSchema.properties.browser.enum)
+      .toContain("default");
+    expect(TOOLS.find((tool) => tool.name === "search")?.inputSchema.properties.browser.enum)
+      .toContain("default");
+    expect(TOOLS.find((tool) => tool.name === "search")?.inputSchema.properties.browser.enum)
+      .toContain("host");
+    expect(TOOLS.find((tool) => tool.name === "search")?.description)
+      .toContain("Prefer Codex's integrated Browser");
+    expect(TOOLS.find((tool) => tool.name === "search")?.description)
+      .toContain("Do not silently switch to system Chrome");
+  });
+
+  it("reports default-browser status without launching it", async () => {
+    const res = await dispatch({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "tools/call",
+      params: { name: "browser_status", arguments: {} },
+    });
+    const text = (res!.result as { content: { text: string }[] }).content[0]!.text;
+    expect(JSON.parse(text)).toMatchObject({ state: "stopped", profile: "default" });
   });
 
   it("returns an isError tool result when query is missing", async () => {
@@ -103,7 +130,10 @@ describe("MCP dispatch", () => {
         ],
       });
     });
-    afterEach(() => vi.restoreAllMocks());
+    afterEach(() => {
+      resetHostBrowserStateForTests();
+      vi.restoreAllMocks();
+    });
 
     it("renders the search response as markdown text content", async () => {
       const res = await dispatch({
@@ -116,6 +146,61 @@ describe("MCP dispatch", () => {
       expect(content[0]!.type).toBe("text");
       expect(content[0]!.text).toContain("Gibson Assembly Protocol");
       expect(content[0]!.text).toContain("url:https://www.neb.com/x");
+    });
+
+    it("delegates NEB search to the host browser and serves committed HTML from cache", async () => {
+      const prepared = await dispatch({
+        jsonrpc: "2.0",
+        id: 51,
+        method: "tools/call",
+        params: {
+          name: "search",
+          arguments: { query: "gibson assembly", sources: ["neb"], limit: 1, browser: "host" },
+        },
+      });
+      const preparedText = (prepared!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(preparedText).toContain("_status: host-browser-required_");
+      expect(search.search).not.toHaveBeenCalled();
+      const task = JSON.parse(preparedText.slice(preparedText.indexOf("{")).trim()) as {
+        captureId: string;
+        searchUrl: string;
+      };
+      expect(task.searchUrl).toContain("www.neb.com/en-us/search");
+
+      const committed = await dispatch({
+        jsonrpc: "2.0",
+        id: 52,
+        method: "tools/call",
+        params: {
+          name: "neb_search_commit",
+          arguments: {
+            captureId: task.captureId,
+            results: [{
+              title: "Gibson Assembly Protocol",
+              url: "https://www.neb.com/en-us/protocols/gibson-assembly",
+              snippet: "Rendered by NEB",
+              html: "<main><h1>Gibson Assembly</h1><p>Mix and incubate for 15 minutes.</p></main>",
+            }],
+          },
+        },
+      });
+      const committedText = (committed!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(committedText).toContain("Gibson Assembly Protocol");
+      expect(committedText).toContain("Host-browser NEB captures cached");
+
+      const fetched = await dispatch({
+        jsonrpc: "2.0",
+        id: 53,
+        method: "tools/call",
+        params: {
+          name: "fetch",
+          arguments: { id: "url:https://www.neb.com/en-us/protocols/gibson-assembly" },
+        },
+      });
+      const fetchedText = (fetched!.result as { content: { text: string }[] }).content[0]!.text;
+      expect(fetchedText).toContain("HTML captured by ChatGPT's built-in Browser during NEB search");
+      expect(fetchedText).toContain("<h1>Gibson Assembly</h1>");
+      expect(fetchedText).toContain("_status: display-only-full-text_");
     });
   });
 
@@ -146,18 +231,21 @@ describe("MCP dispatch", () => {
     });
 
     it("fetches a batch of ids into one response, each under its own header", async () => {
+      const ids = ["url:mailto:orders@neb.com", "url:mailto:support@qiagen.com"];
       const res = await dispatch({
         jsonrpc: "2.0",
         id: 8,
         method: "tools/call",
         params: {
           name: "fetch",
-          arguments: { ids: ["url:https://www.neb.com/x", "url:https://qiagen.com/y"] },
+          // Non-HTTP ids make this protocol-format test hermetic. Network
+          // retrieval behavior is covered with mocked fetches elsewhere.
+          arguments: { ids },
         },
       });
       const text = (res!.result as { content: { text: string }[] }).content[0]!.text;
-      expect(text).toContain("# url:https://www.neb.com/x");
-      expect(text).toContain("# url:https://qiagen.com/y");
+      expect(text).toContain(`# ${ids[0]}`);
+      expect(text).toContain(`# ${ids[1]}`);
       expect(text).toContain("---");
     });
   });

@@ -66,7 +66,9 @@ describe("deep-search runner", () => {
     expect(progress.searchedKeywords).toHaveLength(5);
     const attempts = await store.readAttempts(created.id);
     expect(attempts.filter((attempt) => attempt.route === "native-fetch")).toHaveLength(6);
-    expect(attempts.find((attempt) => attempt.route === "browser-cdp" && attempt.status === "ok")).toMatchObject({
+    expect(attempts.find((attempt) =>
+      attempt.resultId === "doi:10.1/shared" && attempt.route === "browser-cdp" && attempt.status === "ok"
+    )).toMatchObject({
       adapter: "fake-browser",
       provenanceRoute: "fixture",
       finalUrl: "https://example.com/shared",
@@ -124,6 +126,43 @@ describe("deep-search runner", () => {
       provenanceRoute: "fixture-xhr",
       capturedUrl: "https://www.semanticscholar.org/api/1/search",
     });
+  });
+
+  it("records default-browser vendor recovery as display-only full text", async () => {
+    const store = new FileJobStore(await mkdtemp(join(tmpdir(), "labee-agent-default-route-")));
+    const spec = normalizeDeepSearchInput({ query: "NEB ligation", browser: "default", maxRounds: 1 });
+    const created = await store.create(spec);
+    const browser = new FakeBrowser();
+    Object.defineProperty(browser, "attemptRoute", { value: "browser-default" });
+    const vendorResult = {
+      id: "url:https://www.neb.com/en-us/protocols/ligation",
+      source: "neb",
+      kind: "vendor-page" as const,
+      title: "NEB ligation protocol",
+      url: "https://www.neb.com/en-us/protocols/ligation",
+      fetchable: "none" as const,
+    };
+    await runDeepSearchJob(created.id, {
+      store,
+      browser,
+      searchFn: async (query) => ({
+        query,
+        partial: false,
+        unknownSources: [],
+        sources: [{ id: "neb", name: "NEB", kind: "vendor", count: 1 }],
+        results: [vendorResult],
+      }),
+      fetchManyFn: async (ids) => ids.map((id) => ({ id, text: "_status: not-fetchable_" })),
+    });
+    const finding = (await store.readFindings(created.id))[0];
+    expect(finding).toMatchObject({
+      finalStatus: "display-only-full-text",
+      verification: "verified",
+      route: "browser-default",
+    });
+    expect((await store.readAttempts(created.id))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ route: "browser-default", status: "display-only-full-text" }),
+    ]));
   });
 
   it("rejects keyword suites that are not exactly five distinct entries", () => {

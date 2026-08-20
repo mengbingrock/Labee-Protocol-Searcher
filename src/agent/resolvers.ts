@@ -26,7 +26,7 @@ export function extractHttpUrls(text: string): string[] {
 
 export interface ResolutionCandidate {
   url: string;
-  route: Exclude<AttemptRoute, "native-fetch" | "browser-cdp">;
+  route: Exclude<AttemptRoute, "native-fetch" | "browser-cdp" | "browser-default">;
 }
 
 function bioProtocolId(value: string): string | undefined {
@@ -65,7 +65,7 @@ export function isVerifiedStatus(status: FetchStatus): boolean {
 export function verificationFor(status: FetchStatus): "verified" | "partial" | "unresolved" | "blocked" {
   if (isVerifiedStatus(status)) return "verified";
   if (status === "abstract-only" || status === "oa-link" || status === "display-only-link") return "partial";
-  if (status === "blocked" || status === "unsafe-url") return "blocked";
+  if (status === "blocked" || status === "interaction-required" || status === "unsafe-url") return "blocked";
   return "unresolved";
 }
 
@@ -80,6 +80,7 @@ export function betterStatus(current: FetchStatus, candidate: FetchStatus): Fetc
     "no-open-fulltext": 50,
     "not-fetchable": 40,
     blocked: 30,
+    "interaction-required": 35,
     timeout: 20,
     "browser-unavailable": 25,
     "not-found": 20,

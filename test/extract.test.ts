@@ -330,6 +330,11 @@ describe("looksLikeBotWall", () => {
     expect(looksLikeBotWall(article)).toBe(false);
   });
 
+  it("recognizes NEB-style short security verification interstitials", () => {
+    expect(looksLikeBotWall("Performing security verification. Verify that you are human."))
+      .toBe(true);
+  });
+
   it("returns null from extraction rather than handing the wall back as content", async () => {
     const wall = resp(
       "<html><body><h1>Checking your browser before accessing pmc.ncbi.nlm.nih.gov</h1>" +

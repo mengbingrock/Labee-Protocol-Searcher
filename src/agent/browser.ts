@@ -45,6 +45,7 @@ function evidence(
 
 export class CdpBrowserAdapter implements BrowserAdapter {
   readonly id = "playwright-cdp";
+  readonly attemptRoute = "browser-cdp" as const;
   private readonly endpoint: URL;
   private readonly connectOverCdp: ConnectOverCdp | undefined;
   private browser: import("playwright-core").Browser | undefined;
@@ -53,6 +54,7 @@ export class CdpBrowserAdapter implements BrowserAdapter {
   constructor(
     endpoint = process.env.PROTOCOLS_BROWSER_CDP_URL ?? "http://127.0.0.1:9222",
     connectOverCdp?: ConnectOverCdp,
+    private readonly ownsBrowser = false,
   ) {
     this.endpoint = assertLoopbackCdpEndpoint(endpoint);
     this.connectOverCdp = connectOverCdp;
@@ -119,6 +121,7 @@ export class CdpBrowserAdapter implements BrowserAdapter {
     if (!connected.browser) return evidence("unavailable", connected.reason);
 
     let page: import("playwright-core").Page | undefined;
+    let keepPage = false;
     try {
       const context = connected.browser.contexts()[0];
       if (!context) return evidence("unavailable", "CDP browser has no context");
@@ -127,12 +130,13 @@ export class CdpBrowserAdapter implements BrowserAdapter {
       page.on("download", (download) => void download.cancel());
       await page.route("**/*", async (route) => {
         const req = route.request();
-        if (["image", "media", "font", "websocket"].includes(req.resourceType())) {
+        if (!this.ownsBrowser && ["image", "media", "font", "websocket"].includes(req.resourceType())) {
           await route.abort("blockedbyclient");
           return;
         }
         try {
-          await assertSafePublicUrl(req.url(), request.allowedHosts);
+          const policyUrl = req.url().replace(/^wss:/i, "https:");
+          await assertSafePublicUrl(policyUrl, request.allowedHosts);
           await route.continue();
         } catch {
           await route.abort("blockedbyclient");
@@ -143,26 +147,77 @@ export class CdpBrowserAdapter implements BrowserAdapter {
         timeout: request.timeoutMs,
       });
       if (!response || response.status() === 404) return evidence("not-found", "browser navigation returned 404");
-      if (response.status() === 401 || response.status() === 403) {
-        return evidence("blocked", `browser navigation returned HTTP ${response.status()}`);
-      }
       await assertSafePublicUrl(page.url(), request.allowedHosts);
-      const selectors = ["article", "main", "body"];
-      let text = "";
-      for (const selector of selectors) {
-        text = (await page.locator(selector).first().innerText({ timeout: 2_000 }).catch(() => "")).trim();
-        if (text.length >= 200) break;
+      const readContent = async (): Promise<{ text: string; html: string }> => {
+        let fallback = { text: "", html: "" };
+        for (const selector of ["article", "main", "body"]) {
+          const locator = page!.locator(selector).first();
+          const text = (await locator.innerText({ timeout: 2_000 }).catch(() => "")).trim();
+          const html = text
+            ? (await locator.innerHTML({ timeout: 2_000 }).catch(() => "")).trim()
+            : "";
+          if (text.length > fallback.text.length) fallback = { text, html };
+          if (text.length >= 200) {
+            return { text, html };
+          }
+        }
+        return fallback;
+      };
+      const challengePresent = async (text: string): Promise<boolean> => {
+        if (looksLikeBotWall(text)) return true;
+        const title = await page!.title().catch(() => "");
+        if (/just a moment|security verification|verify (?:you are|that you are) human/i.test(title)) return true;
+        return (await page!.locator(
+          'iframe[src*="challenges.cloudflare.com"], #challenge-running, #challenge-stage, .cf-challenge',
+        ).count().catch(() => 0)) > 0;
+      };
+      let { text, html } = await readContent();
+      const responseStatus = response.status();
+      const startedOnBotWall = await challengePresent(text);
+      if (startedOnBotWall && (request.interactionTimeoutMs ?? 0) > 0) {
+        const deadline = Date.now() + request.interactionTimeoutMs!;
+        while (Date.now() < deadline && await challengePresent(text)) {
+          if (request.signal?.aborted) return evidence("timeout", "browser request cancelled");
+          await page.waitForTimeout(Math.min(1_000, Math.max(1, deadline - Date.now())));
+          ({ text, html } = await readContent());
+        }
       }
-      if (!text || looksLikeBotWall(text)) return evidence("blocked", "page is empty or a bot challenge");
+      if (!text) {
+        return evidence("blocked", responseStatus >= 400
+          ? `browser navigation returned HTTP ${responseStatus}`
+          : "page is empty");
+      }
+      if (await challengePresent(text)) {
+        keepPage = true;
+        return evidence("interaction-required", "complete the visible browser verification, then retry", {
+          finalUrl: page.url(),
+          title: await page.title(),
+        });
+      }
+      // A challenge may initially return 403 and then navigate in-place after
+      // the user completes it. In that case the current protocol DOM, not the
+      // stale response object from page.goto, is authoritative.
+      if (responseStatus >= 400 && !startedOnBotWall) {
+        return evidence("blocked", `browser navigation returned HTTP ${responseStatus}`);
+      }
       if (!looksLikeProtocolEvidence(text)) {
         return evidence("not-found", "page did not contain enough procedural evidence");
       }
+      const links = await page.locator("a[href]").evaluateAll((anchors) =>
+        anchors
+          .map((anchor) => (anchor as HTMLAnchorElement).href)
+          .filter((href) => /^https?:\/\//i.test(href))
+          .slice(0, 100),
+      ).catch(() => [] as string[]);
       const maxChars = Math.min(request.maxChars, MAX_BROWSER_TEXT);
       const bounded = text.length > maxChars ? `${text.slice(0, maxChars)}\n\n…[truncated]` : text;
+      const boundedHtml = html.length > maxChars ? `${html.slice(0, maxChars)}\n<!-- truncated -->` : html;
       return evidence("ok", undefined, {
         finalUrl: page.url(),
         title: await page.title(),
         text: bounded,
+        ...(boundedHtml ? { html: boundedHtml } : {}),
+        links: [...new Set(links)],
         format: "dom",
         provenance: { adapter: this.id, route: "publisher-dom", capturedUrl: page.url() },
       });
@@ -170,7 +225,7 @@ export class CdpBrowserAdapter implements BrowserAdapter {
       const message = err instanceof Error ? err.message : "browser retrieval failed";
       return evidence(/timeout/i.test(message) ? "timeout" : "blocked", message);
     } finally {
-      await page?.close().catch(() => undefined);
+      if (!keepPage) await page?.close().catch(() => undefined);
       // Do not close a CDP-attached browser: the endpoint belongs to the operator.
     }
   }
@@ -264,9 +319,15 @@ export class CdpBrowserAdapter implements BrowserAdapter {
   }
 
   async close(): Promise<void> {
-    // `connectOverCDP` attaches to an operator-owned Chrome process. Browser.close
-    // may terminate that process, so adapter shutdown only forgets the handle.
-    // Per-request pages are already closed in `finally` blocks above.
+    if (this.ownsBrowser) {
+      if (!this.browser?.isConnected()) {
+        const state = await this.available();
+        if (state.available) await this.connectedBrowser();
+      }
+      await this.browser?.close().catch(() => undefined);
+    }
+    // Operator-owned CDP sessions are only forgotten; owned sessions opt in
+    // to Browser.close through `ownsBrowser`.
     this.browser = undefined;
     this.verifiedWebSocketEndpoint = undefined;
   }

@@ -8,12 +8,24 @@
 
 import { readFileSync } from "node:fs";
 import { search, renderSearch } from "./search.ts";
-import { fetchResource, fetchResources } from "./fetch.ts";
 import { VENDORS, VENDOR_IDS, type Fetchability } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
 import { journalProviderOrder } from "./journals.ts";
 import { deepSearchService } from "./agent/service.ts";
 import type { DeepSearchInput } from "./agent/types.ts";
+import { looksLikeEnzymeQuery } from "./rebase.ts";
+import {
+  browserHosts,
+  fetchResourceWithBrowser,
+  fetchResourcesWithBrowser,
+} from "./agent/browser-fetch.ts";
+import { browserAdapterForMode, defaultBrowser } from "./agent/default-browser.ts";
+import {
+  commitHostBrowserSearch,
+  fetchHostBrowserCapture,
+  prepareHostBrowserSearch,
+  type HostBrowserCaptureInput,
+} from "./agent/host-browser.ts";
 
 /** Every searchable source id: the vendors/journals plus the REBASE database. */
 const SOURCE_IDS = [...VENDOR_IDS, "rebase"] as const;
@@ -37,6 +49,18 @@ function packageVersion(): string {
 }
 
 const SERVER_INFO = { name: "labee-protocol-searcher", version: packageVersion() };
+const SERVER_INSTRUCTIONS =
+  "Prefer Codex's integrated Browser for browser tasks. It keeps browsing inside Codex, uses a " +
+  "separate profile, and provides a shared view; it is especially suitable for public websites, " +
+  "research, and localhost testing. For NEB searches, call search with browser=host. Open the returned " +
+  "hostBrowserTask.searchUrl in the integrated Browser, read its rendered results, open selected " +
+  "NEB result pages in that same Browser profile, then call neb_search_commit with the captureId and " +
+  "captured HTML or visible text. A later fetch of a committed id returns the cached capture without " +
+  "reopening NEB. Do not substitute generic web-search results or silently switch to system Chrome, " +
+  "browser=default, or CDP. Use those fallbacks only when the integrated Browser is unavailable and " +
+  "the user explicitly authorizes one.";
+/** Search-to-fetch browser handoff for the lifetime of one local MCP process. */
+const sameProfileBrowserById = new Map<string, "cdp" | "default">();
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -68,8 +92,12 @@ export const TOOLS = [
       "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — " +
       "fresh exact DOI observations from the daily CI index win, current OA metadata is next, and " +
       "the source grade is the fallback prior. Call `fetch` with a result's id to read its " +
-      "content; vendor pages included. Don't spend a `fetch` on a `links-only` result — the site " +
-      "refuses automated requests and you already have its url.",
+      "content; vendor pages included. Prefer Codex's integrated Browser for browser tasks because it " +
+      "uses a separate profile and provides a shared view. For NEB, pass `browser: host` so both the " +
+      "rendered search and selected result pages use the integrated Browser; commit " +
+      "those captures with `neb_search_commit`, and a following `fetch` returns the same captured HTML. " +
+      "Do not silently switch to system Chrome. Use `browser: default` or `cdp` only when the integrated " +
+      "Browser is unavailable and the user explicitly authorizes that fallback.",
     inputSchema: {
       type: "object",
       properties: {
@@ -89,8 +117,50 @@ export const TOOLS = [
           type: "number",
           description: "Max results per source (1-10, default 5).",
         },
+        browser: {
+          type: "string",
+          enum: ["off", "cdp", "default", "host"],
+          description:
+            "Optional NEB browser route. Prefer `host`: it delegates both NEB search and result capture " +
+            "to Codex's integrated Browser via neb_search_commit. `default` uses system Chrome and must " +
+            "only be selected as an explicitly authorized fallback.",
+        },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "neb_search_commit",
+    title: "Commit rendered NEB browser search results",
+    annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: false },
+    description:
+      "Complete a host-browser NEB search prepared by `search(browser: host)`. Submit only results " +
+      "rendered by the NEB search page, after opening each selected result in the same ChatGPT Browser " +
+      "profile. Labee caches exact HTML when supplied, otherwise rendered visible text; later `fetch` " +
+      "calls return that cached capture without another NEB navigation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        captureId: { type: "string", description: "Opaque capture id returned by search(browser: host)." },
+        results: {
+          type: "array",
+          minItems: 1,
+          maxItems: 10,
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              url: { type: "string", description: "NEB result URL from the rendered search page." },
+              finalUrl: { type: "string", description: "Final NEB URL after browser redirects." },
+              snippet: { type: "string" },
+              html: { type: "string", description: "Exact rendered main/article HTML when available." },
+              text: { type: "string", description: "Rendered visible text fallback." },
+            },
+            required: ["title", "url"],
+          },
+        },
+      },
+      required: ["captureId", "results"],
     },
   },
   {
@@ -106,7 +176,10 @@ export const TOOLS = [
       "rendered section-by-section — pass `section` to read just one (e.g. 'Methods'). A " +
       "`url:` page is fetched and its readable text extracted; most vendors work, but a few (notably " +
       "neb.com, sigmaaldrich.com, emdmillipore.com) refuse automated requests and return their link " +
-      "instead — `search` grades each result so you know which to expect. Pass " +
+      "instead — `search` grades each result so you know which to expect. " +
+      "After a host-browser NEB search is committed, fetch returns the exact HTML or rendered text captured " +
+      "by that same in-app Browser profile without reopening NEB. Default-profile searches likewise reuse " +
+      "their captured HTML. Pass " +
       "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
       "enzyme names also work. Every result ends with a `_status: …_` line (ok, entitled-full-text, " +
       "display-only-full-text, display-only-link, abstract-only, no-open-fulltext, oa-link, " +
@@ -131,8 +204,40 @@ export const TOOLS = [
             "For article full text only: a case-insensitive section-title substring (e.g. " +
             "'Methods', 'Protocol') to return just that section instead of the whole article.",
         },
+        browser: {
+          type: "string",
+          enum: ["off", "cdp", "default", "host"],
+          description:
+            "Optional browser recovery. `host` reads a capture committed from ChatGPT's Browser; `default` " +
+            "uses normal Chrome; `cdp` connects to PROTOCOLS_BROWSER_CDP_URL; `off` uses native retrieval.",
+        },
       },
     },
+  },
+  {
+    name: "browser_launch",
+    title: "Open Labee's fallback system-Chrome window",
+    annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: true },
+    description:
+      "Fallback only: open or reconnect to one Labee-owned window in the user's normal Chrome profile. " +
+      "Prefer Codex's integrated Browser; call this tool only when it is unavailable and the user explicitly " +
+      "authorizes system Chrome. Existing windows and tabs are never inspected or closed. Chrome must allow " +
+      "JavaScript from Apple Events.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "browser_status",
+    title: "Get Labee browser status",
+    annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    description: "Report whether Labee's dedicated default-profile window is ready or needs permission/verification.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "browser_close",
+    title: "Close Labee's Chrome window",
+    annotations: { readOnlyHint: false, openWorldHint: false, idempotentHint: true },
+    description: "Close only the dedicated Chrome window created by Labee; existing user windows remain open.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "deep_search_start",
@@ -141,7 +246,8 @@ export const TOOLS = [
     description:
       "Start a durable deep-search job. It searches exactly five distinct keyword variants, runs every " +
       "configured scholarly backend and every available web backend, native-fetches every returned result, " +
-      "then tries deterministic OA and optional local-CDP browser recovery. Returns a job id immediately.",
+      "then tries deterministic OA and optional browser recovery. Use `default` for one dedicated window in " +
+      "the normal Chrome profile, `cdp`/`auto` for an existing local CDP endpoint, or `off`. Returns a job id immediately.",
     inputSchema: {
       type: "object",
       properties: {
@@ -153,7 +259,7 @@ export const TOOLS = [
         maxSeconds: { type: "number", minimum: 30, maximum: 1800 },
         maxBrowserPages: { type: "number", minimum: 0, maximum: 20 },
         maxBrowserSearchPages: { type: "number", minimum: 0, maximum: 50 },
-        browser: { type: "string", enum: ["auto", "off", "cdp"] },
+        browser: { type: "string", enum: ["auto", "off", "cdp", "default"] },
       },
       required: ["query"],
     },
@@ -237,24 +343,126 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       ? args.sources.filter((x): x is string => typeof x === "string")
       : undefined;
     const limit = typeof args.limit === "number" ? args.limit : undefined;
+    const browserMode = ["off", "cdp", "default", "host"].includes(String(args.browser))
+      ? (args.browser as "off" | "cdp" | "default" | "host")
+      : undefined;
+    const wantsNeb = sources
+      ? sources.some((source) => source.trim().toLowerCase() === "neb")
+      : true;
+    if (browserMode === "host" && wantsNeb) {
+      const nonNebSources = sources
+        ? sources.filter((source) => source.trim().toLowerCase() !== "neb")
+        : [
+            ...VENDOR_IDS.filter((source) => source !== "neb"),
+            ...(looksLikeEnzymeQuery(query) ? ["rebase"] : []),
+          ];
+      const base = nonNebSources.length > 0
+        ? await search(query, {
+            sources: nonNebSources,
+            ...(limit !== undefined ? { limit } : {}),
+          })
+        : { query: query.trim(), results: [], sources: [], unknownSources: [], partial: false };
+      const task = prepareHostBrowserSearch(query, limit ?? 5, base);
+      return toolText([
+        ...(base.sources.length > 0 ? [renderSearch(base), ""] : []),
+        "_status: host-browser-required_",
+        "",
+        "hostBrowserTask:",
+        JSON.stringify(task, null, 2),
+      ].join("\n"));
+    }
     const resp = await search(query, {
       ...(sources ? { sources } : {}),
       ...(limit !== undefined ? { limit } : {}),
     });
-    return toolText(renderSearch(resp));
+    const browser = browserAdapterForMode(browserMode === "host" ? undefined : browserMode);
+    const captures: string[] = [];
+    if (browser) {
+      for (const result of resp.results.filter((item) => item.source === "neb" && item.url)) {
+        const url = new URL(result.url!);
+        const hit = await browser.retrieve({
+          url: url.toString(),
+          sourceId: "neb",
+          allowedHosts: browserHosts(url),
+          maxChars: 80_000,
+          timeoutMs: 12_000,
+          interactionTimeoutMs: 5_000,
+        });
+        if (browserMode === "cdp" || browserMode === "default") {
+          // Even a pending verification belongs to this profile. A following
+          // fetch can retry after the user completes the visible check.
+          sameProfileBrowserById.set(result.id, browserMode);
+        }
+        if (hit.status === "ok") {
+          captures.push(`- ${result.id}: rendered HTML cached for same-profile fetch`);
+        } else {
+          captures.push(`- ${result.id}: browser capture ${hit.status}${hit.detail ? ` (${hit.detail})` : ""}`);
+          if (hit.status === "interaction-required") break;
+        }
+      }
+    }
+    return toolText([
+      renderSearch(resp),
+      ...(captures.length > 0 ? ["", "Same-profile NEB browser capture:", ...captures] : []),
+    ].join("\n"));
+  }
+  if (name === "neb_search_commit") {
+    const captureId = typeof args.captureId === "string" ? args.captureId : "";
+    const results = Array.isArray(args.results)
+      ? args.results.filter((item): item is HostBrowserCaptureInput => Boolean(item) && typeof item === "object")
+      : [];
+    if (!captureId) return toolText("Error: `captureId` is required.", true);
+    const committed = commitHostBrowserSearch(captureId, results);
+    return toolText([
+      renderSearch(committed.response),
+      "",
+      "Host-browser NEB captures cached:",
+      ...committed.capturedIds.map((id) => `- ${id}: ${committed.formats[id]}`),
+    ].join("\n"));
   }
   if (name === "fetch") {
     const section = typeof args.section === "string" ? args.section : undefined;
     const opts = section ? { section } : {};
+    const requestedBrowserMode = ["off", "cdp", "default", "host"].includes(String(args.browser))
+      ? (args.browser as "off" | "cdp" | "default" | "host")
+      : undefined;
     const list = Array.isArray(args.ids)
       ? args.ids.filter((x): x is string => typeof x === "string" && x.trim() !== "")
       : [];
     const single = typeof args.id === "string" && args.id.trim() ? args.id : "";
     if (single) list.unshift(single);
     if (list.length === 0) return toolText("Error: `id` (or `ids`) is required.", true);
-    if (list.length === 1) return toolText(await fetchResource(list[0]!, opts));
-    const rows = await fetchResources(list, opts);
+    const inheritedBrowserMode = list
+      .map((id) => sameProfileBrowserById.get(id))
+      .find((mode): mode is "cdp" | "default" => Boolean(mode));
+    const browserMode = requestedBrowserMode === "off"
+      ? "off"
+      : requestedBrowserMode ?? inheritedBrowserMode;
+    const browser = browserAdapterForMode(browserMode === "host" ? undefined : browserMode);
+    if (list.length === 1) {
+      const captured = fetchHostBrowserCapture(list[0]!);
+      return toolText(captured ?? await fetchResourceWithBrowser(list[0]!, opts, browser));
+    }
+    const capturedRows = list.map((id) => ({ id, text: fetchHostBrowserCapture(id) }));
+    const rows = capturedRows.every((row) => row.text === undefined)
+      ? await fetchResourcesWithBrowser(list, opts, browser)
+      : await Promise.all(capturedRows.map(async (row) => ({
+          id: row.id,
+          text: row.text ?? await fetchResourceWithBrowser(row.id, opts, browser),
+        })));
     return toolText(rows.map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+  }
+  if (name === "browser_launch") {
+    return toolText(JSON.stringify(await defaultBrowser().launch(), null, 2));
+  }
+  if (name === "browser_status") {
+    return toolText(JSON.stringify(defaultBrowser().status(), null, 2));
+  }
+  if (name === "browser_close") {
+    const browser = defaultBrowser();
+    await browser.close();
+    sameProfileBrowserById.clear();
+    return toolText(JSON.stringify(browser.status(), null, 2));
   }
   if (name === "deep_search_start") {
     const query = typeof args.query === "string" ? args.query : "";
@@ -265,7 +473,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     const sources = Array.isArray(args.sources)
       ? args.sources.filter((x): x is string => typeof x === "string")
       : undefined;
-    const browser = ["auto", "off", "cdp"].includes(String(args.browser))
+    const browser = ["auto", "off", "cdp", "default"].includes(String(args.browser))
       ? (args.browser as DeepSearchInput["browser"])
       : undefined;
     const input: DeepSearchInput = {
@@ -316,7 +524,12 @@ export async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | n
       return {
         jsonrpc: "2.0",
         id,
-        result: { protocolVersion, capabilities: { tools: {} }, serverInfo: SERVER_INFO },
+        result: {
+          protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: SERVER_INFO,
+          instructions: SERVER_INSTRUCTIONS,
+        },
       };
     }
     case "notifications/initialized":
