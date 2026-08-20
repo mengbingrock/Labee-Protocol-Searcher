@@ -1,6 +1,7 @@
 name: Backend health
 
-# Probes every third-party backend and commits the measured result into the
+# Probes every third-party backend, searches every declared journal and vendor,
+# fetches a result from each source, and commits the measured result into the
 # README's health block. Runs daily because the failure mode this catches is a
 # provider changing behaviour on its own schedule, not a change to this repo.
 #

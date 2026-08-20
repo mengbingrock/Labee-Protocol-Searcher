@@ -11,6 +11,7 @@ import {
   parseHistory,
   renderBlock,
   renderHistory,
+  sourceProbeRows,
   spliceBlock,
   statusOf,
   summarize,
@@ -56,6 +57,28 @@ describe("contentOfStatus", () => {
 
   it("keeps a display-only landing page in the link tier", () => {
     expect(contentOfStatus("display-only-link")).toBe("open-link");
+  });
+});
+
+describe("sourceProbeRows", () => {
+  it("keeps every declared journal and vendor in the daily matrix", () => {
+    const declared = new Map([
+      ["star-protocols", "full"],
+      ["neb", "none"],
+      ["rebase", "full"],
+    ]);
+    const rows = sourceProbeRows(declared, {
+      sources: [{ id: "star-protocols", name: "STAR Protocols", kind: "journal", count: 3 }],
+    });
+
+    expect(rows).toEqual([
+      expect.objectContaining({ id: "star-protocols", count: 3, searchError: "" }),
+      expect.objectContaining({
+        id: "neb",
+        count: 0,
+        searchError: "source missing from search response",
+      }),
+    ]);
   });
 });
 
@@ -118,6 +141,7 @@ describe("renderBlock", () => {
     const md = renderBlock(report);
     expect(md).toContain("2026-01-01T00:00Z");
     expect(md).toContain("PCR purification");
+    expect(md).toContain("searches every declared protocol journal and vendor");
   });
 
   it("names drifted sources so the grade gets re-checked", () => {

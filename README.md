@@ -36,6 +36,7 @@ skill are loaded. The plugin downloads the pinned public npm release
 | Publisher and supplier search pages often block automation or hide results behind interactive pages. | Labee uses several independent discovery routes and keeps a direct source link when a page cannot be read automatically. |
 | A promising search result may lead to a paywall, an abstract, or a broken page. | Every result says what Labee expects to be readable, and every retrieval reports what it actually got — the two are never conflated. |
 | One literature index can miss an important paper or be temporarily unavailable. | Labee checks multiple scholarly indexes and combines their findings instead of stopping after the first successful search. |
+| A source can change or break without warning. | Daily CI searches every declared journal and vendor, fetches a result from each, and publishes the per-source outcome in this README. |
 | Restriction-enzyme details are difficult to extract from commercial product pages. | Labee reads the open REBASE record for recognition sites, cut positions, isoschizomers, methylation sensitivity, and suppliers. |
 
 ## What you can ask
@@ -242,8 +243,11 @@ linked source and your laboratory’s approved practices.
 
 ## Current service transparency
 
-Labee checks its supported search routes and a sample of paper-access results
-every day. The customer-facing summary from the latest run is:
+Labee's daily CI uses the production CLI to search every declared protocol
+journal and vendor and fetch a result from each one. It also fetches every
+unique journal DOI returned by the sweep. The generated per-source matrix below
+is written back into this README. The customer-facing summary from the latest
+run is:
 
 - all 16 supported sources returned search results;
 - 47 individual papers were tested for access;
@@ -257,6 +261,8 @@ every day. The customer-facing summary from the latest run is:
 
 <!-- HEALTH:BEGIN -->
 _Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-20T05:49Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+
+The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
 ❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 

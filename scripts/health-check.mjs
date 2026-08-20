@@ -245,6 +245,32 @@ async function probeDoiResults(results) {
 }
 
 /**
+ * Build one health row seed for every declared non-REBASE source. The catalog,
+ * not today's search response, is authoritative: if a journal or vendor
+ * disappears from the response entirely, the daily report must show a failed
+ * row instead of silently shrinking its denominator.
+ */
+export function sourceProbeRows(declared, json) {
+  const buckets = new Map((json?.sources ?? []).map((bucket) => [bucket.id, bucket]));
+  return [...declared.entries()]
+    .filter(([id]) => id !== "rebase")
+    .map(([id, grade]) => {
+      const bucket = buckets.get(id);
+      return {
+        id,
+        name: bucket?.name ?? id,
+        kind: bucket?.kind ?? "unknown",
+        declared: grade,
+        count: bucket?.count ?? 0,
+        searchError: bucket?.error || (bucket ? "" : "source missing from search response"),
+        fetchStatus: "",
+        tier: "",
+        probedId: "",
+      };
+    });
+}
+
+/**
  * One search across every source, then fetch every unique journal DOI plus the
  * top non-DOI result from each remaining source. The search half measures reach;
  * the fetch half feeds both source health and the exact DOI index.
@@ -256,19 +282,9 @@ async function probeSources(declared) {
   const doiFetchability = await probeDoiResults(json.results ?? []);
   const doiById = new Map(doiFetchability.map((row) => [`doi:${row.doi}`, row]));
 
-  const rows = await mapLimit(json.sources ?? [], CONCURRENCY, async (bucket) => {
-    const top = (json.results ?? []).find((r) => r.source === bucket.id);
-    const row = {
-      id: bucket.id,
-      name: bucket.name,
-      kind: bucket.kind,
-      declared: declared.get(bucket.id) ?? "unknown",
-      count: bucket.count ?? 0,
-      searchError: bucket.error || "",
-      fetchStatus: "",
-      tier: "",
-      probedId: top?.id ?? "",
-    };
+  const rows = await mapLimit(sourceProbeRows(declared, json), CONCURRENCY, async (row) => {
+    const top = (json.results ?? []).find((result) => result.source === row.id);
+    row.probedId = top?.id ?? "";
     if (top) {
       const doiObservation = doiById.get(top.id.toLowerCase());
       if (doiObservation) {
@@ -473,6 +489,12 @@ function renderBlock(report, history = []) {
     `_Measured automatically by [\`scripts/health-check.mjs\`](scripts/health-check.mjs), ` +
       `re-run daily by [the health workflow](.github/workflows/health.yml). ` +
       `Last run: **${generatedAt}** · probe query \`${query}\` (\`${enzyme}\` for REBASE)._`,
+  );
+  lines.push("");
+  lines.push(
+    "The scheduled run searches every declared protocol journal and vendor, then calls `fetch` " +
+      "for each source's top result. It additionally fetches every unique journal DOI returned " +
+      "by the sweep.",
   );
   lines.push("");
 
