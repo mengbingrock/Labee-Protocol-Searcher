@@ -21,7 +21,7 @@ Codex's integrated Browser for NEB search and retrieval.
 
 ```bash
 codex plugin marketplace add mengbingrock/Labee-Protocol-Searcher --ref main
-codex plugin add labee-protocol-searcher@labee
+codex plugin add labee-protocol-searcher@labee_market
 ```
 
 Start a new Codex conversation after installation so the plugin's tools and
