@@ -260,18 +260,18 @@ run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-21T05:51Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-22T05:45Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
-❌ **3 backends not answering:** `europepmc`, `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
+❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
 
 **Backends**
 
 | Backend | Chain | Today |
 | --- | --- | --- |
 | `crossref` | journal | ✅ 3 results |
-| `europepmc` | journal | ❌ europepmc: This operation was aborted |
+| `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
 | `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
@@ -286,8 +286,8 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `star-protocols` | ✅ full | ✅ 12 | ✅ `ok` · Europe PMC |
 | `nature-protocols` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `jove` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
-| `bio-protocol` | ✅ full | ✅ 8 | ✅ `ok` · Europe PMC |
-| `current-protocols` | ✅ full | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
+| `bio-protocol` | ✅ full | ✅ 10 | ✅ `ok` · Europe PMC |
+| `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · json extraction |
 | `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
 | `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
@@ -300,7 +300,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
-**Per-DOI retrieval:** 28/49 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
+**Per-DOI retrieval:** 30/49 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -308,6 +308,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-22 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-21 | ⚠️ 4/7 | ✅ 16/16 | ⚠️ 11/16 | `europepmc`, `semanticscholar`, `duckduckgo` | — |
 | 2026-08-20 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-19 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
