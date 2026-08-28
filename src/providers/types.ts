@@ -1,8 +1,8 @@
 // A web-search provider runs one already-`site:`-scoped query and returns
-// ranked results. Providers are tried in priority order (keyed APIs first,
-// then the keyless DuckDuckGo scraper) until one returns results, so a
-// rate-limited or unconfigured provider transparently falls through to the
-// next. See registry.ts for selection and search.ts for orchestration.
+// ranked results. Providers are tried in priority order (Brave, then Google)
+// until one returns results, so a rate-limited provider transparently falls
+// through to the next. Both require an API key; there is no keyless provider.
+// See registry.ts for selection and search.ts for orchestration.
 
 export interface RawResult {
   title: string;
@@ -32,7 +32,7 @@ export interface ProviderOptions {
 }
 
 export interface WebProvider {
-  /** Stable id (e.g. "brave", "google", "duckduckgo"). */
+  /** Stable id (e.g. "brave", "google"). */
   id: string;
   /** True when this provider is configured and usable (e.g. has its API key). */
   available(): boolean;

@@ -2,9 +2,10 @@
 //
 //   - Journal sources (STAR Protocols, Nature Protocols) go to scholarly APIs
 //     (Crossref → Europe PMC): reliable, keyless, no rate limits.
-//   - Vendor sources go to the active web-search provider chain (Brave/Google
-//     when a key is set, else DuckDuckGo), batched into combined
-//     `(site:a OR site:b ...)` queries with results bucketed back per vendor.
+//   - Vendor sources go to the active web-search provider chain (Brave, then
+//     Google — both keyed), batched into combined `(site:a OR site:b ...)`
+//     queries with results bucketed back per vendor. With no key set there is
+//     no vendor search, and the outcome says so.
 //
 // Every source is also paired with its deterministic on-site search URL, so the
 // tool stays useful even when a backend is unavailable.
@@ -69,7 +70,7 @@ function normalizeUrl(url: string): string {
 }
 
 /**
- * Find the vendor a result URL belongs to. Matches by `ddgSite` prefix on a
+ * Find the vendor a result URL belongs to. Matches by `searchSite` prefix on a
  * host boundary (so "neb.com" never matches "neb.com.evil.com") and prefers
  * the most specific match.
  */
@@ -78,11 +79,11 @@ function matchVendor(url: string, vendors: readonly Vendor[]): Vendor | undefine
   const host = norm.split("/")[0]!;
   let best: Vendor | undefined;
   for (const v of vendors) {
-    const site = v.ddgSite.replace(/^www\./, "").toLowerCase();
+    const site = v.searchSite.replace(/^www\./, "").toLowerCase();
     const siteHost = site.split("/")[0]!;
     if (host !== siteHost) continue;
     if (norm === site || norm.startsWith(site)) {
-      if (!best || v.ddgSite.length > best.ddgSite.length) best = v;
+      if (!best || v.searchSite.length > best.searchSite.length) best = v;
     }
   }
   return best;
@@ -160,17 +161,20 @@ export async function searchProtocols(
   // --- Vendors: combined web-search queries, bucketed by hostname. ---
   const webVendors = vendors.filter((v) => v.kind === "vendor");
   await mapPool(chunk(webVendors, batchSize), concurrency, async (group) => {
-    const sites = group.map((v) => `site:${v.ddgSite}`).join(" OR ");
+    const sites = group.map((v) => `site:${v.searchSite}`).join(" OR ");
     const combined = group.length === 1 ? `${sites} ${trimmed}` : `(${sites}) ${trimmed}`;
     const outcome = await webSearch(combined, limit * group.length, providerOpts);
     for (const v of group) buckets.get(v.id)!.providers = outcome.providers;
     if (outcome.results.length === 0) {
       partial = true;
       const reason = outcome.error ?? "no results";
+      // "none" means nothing was contacted at all, so naming it as the backend
+      // that produced the outcome would read as a provider called "none".
+      const attribution = outcome.provider === "none" ? "" : ` (via ${outcome.provider})`;
       for (const v of group) {
         const bucket = buckets.get(v.id)!;
         if (bucket.results.length === 0) {
-          bucket.error = `${reason} (via ${outcome.provider})`;
+          bucket.error = `${reason}${attribution}`;
         }
       }
       return;
@@ -357,7 +361,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
     const effectiveQuery = vendor
       ? kind === "journal"
         ? `${trimmed} in ${b.name}`
-        : `site:${vendor.ddgSite} ${trimmed}`
+        : `site:${vendor.searchSite} ${trimmed}`
       : undefined;
     // Collect first, then drop same-id repeats within the source: normalising
     // DOI variants (see idForArticleUrl) can collapse two hits onto one id, and

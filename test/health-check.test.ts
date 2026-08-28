@@ -111,7 +111,7 @@ const report = {
   enzyme: "EcoRI",
   providers: [
     { id: "crossref", chain: "journal", count: 3, error: "", state: "ok" },
-    { id: "duckduckgo", chain: "web", count: 0, error: "HTTP 202", state: "down" },
+    { id: "semanticscholar", chain: "journal", count: 0, error: "HTTP 429", state: "down" },
     { id: "google", chain: "web", count: 0, error: "GOOGLE_API_KEY not set", state: "unconfigured" },
   ],
   sources: [
@@ -132,7 +132,7 @@ describe("renderBlock", () => {
   it("separates an outage from a missing key", () => {
     const md = renderBlock(report);
     expect(md).toContain("1 backend not answering");
-    expect(md).toContain("`duckduckgo`");
+    expect(md).toContain("`semanticscholar`");
     expect(md).not.toContain("`google`, ");
     expect(md).toMatch(/`google`.*not configured/);
   });
@@ -173,9 +173,9 @@ describe("renderBlock", () => {
 describe("summarize", () => {
   it("counts configured backends separately from unconfigured ones", () => {
     const row = summarize(report);
-    // 3 providers, one of them keyless: 1 up out of 2 configured.
+    // 3 providers, one of them unconfigured: 1 up out of 2 configured.
     expect(row).toMatchObject({ backendsUp: 1, backendsConfigured: 2, backendsUnconfigured: 1 });
-    expect(row.down).toEqual(["duckduckgo"]);
+    expect(row.down).toEqual(["semanticscholar"]);
   });
 
   it("dates the record so the table can group by day", () => {
@@ -290,7 +290,7 @@ describe("renderHistory", () => {
     at: "2026-01-02T05:00Z",
     backendsUp: 5,
     backendsConfigured: 7,
-    down: ["duckduckgo"],
+    down: ["semanticscholar"],
     sourcesWithHits: 16,
     sourcesProbed: 16,
     fetchOk: 12,
@@ -305,7 +305,7 @@ describe("renderHistory", () => {
     expect(md).toContain("| 2026-01-02 |");
     expect(md).toContain("| 2026-01-01 |");
     expect(md).toContain("5/7");
-    expect(md).toContain("`duckduckgo`");
+    expect(md).toContain("`semanticscholar`");
   });
 
   it("says the log is empty rather than printing a headless table", () => {
