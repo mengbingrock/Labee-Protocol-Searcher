@@ -52,7 +52,7 @@ const RETRY_DELAY_MS = Number(process.env.HEALTH_RETRY_DELAY_MS || 5_000);
 // different host, so a handful in flight is polite and cuts the run to minutes.
 const CONCURRENCY = Number(process.env.HEALTH_CONCURRENCY || 4);
 const JOURNAL_PROVIDERS = ["crossref", "europepmc", "openalex", "semanticscholar", "pubmed"];
-const WEB_PROVIDERS = ["brave", "google", "duckduckgo"];
+const WEB_PROVIDERS = ["brave", "google"];
 // Probe targets for the two chains: one journal, one vendor.
 const JOURNAL_PROBE_SOURCE = "star-protocols";
 const VENDOR_PROBE_SOURCE = "thermofisher";

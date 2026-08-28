@@ -7,8 +7,8 @@
 //     publisher sites, which paywall/bot-block. See journals.ts.
 //   - "vendor": reagent/instrument vendors. Their search pages render results
 //     with JavaScript and several bot-block automated fetches, so we *search*
-//     them through a web-search provider (Brave/Google when an API key is set,
-//     otherwise DuckDuckGo) scoped with a `site:` filter. See providers/.
+//     them through a keyed web-search provider (Brave or Google) scoped with a
+//     `site:` filter. Without a key there is no vendor search. See providers/.
 //     Retrieving a result page afterwards is a separate question — most vendors
 //     extract fine, a few always 403 — which is what `fetchability` records.
 //
@@ -54,7 +54,7 @@ export interface Vendor {
   /** Expected outcome of `fetch` on this source's results. */
   fetchability: Fetchability;
   /** Domain (optionally `domain/path`) scoping the web `site:` query (vendors). */
-  ddgSite: string;
+  searchSite: string;
   /** Scholarly-API metadata (journals only). */
   journal?: JournalInfo;
   /** Build the source's own on-site search URL for `query`. */
@@ -71,7 +71,7 @@ export const VENDORS: Vendor[] = [
     kind: "journal",
     // open-access full text via Europe PMC.
     fetchability: "full",
-    ddgSite: "cell.com/star-protocols",
+    searchSite: "cell.com/star-protocols",
     journal: {
       crossrefContainer: "STAR Protocols",
       europepmcJournal: "STAR Protocols",
@@ -88,7 +88,7 @@ export const VENDORS: Vendor[] = [
     // Mostly paywalled, but ~26% of the journal is deposited in PMC as author
     // manuscripts that NCBI serves in full; the rest returns the abstract.
     fetchability: "partial",
-    ddgSite: "nature.com/nprot",
+    searchSite: "nature.com/nprot",
     journal: {
       crossrefContainer: "Nature Protocols",
       europepmcJournal: "Nature Protocols",
@@ -103,7 +103,7 @@ export const VENDORS: Vendor[] = [
     kind: "journal",
     // many JoVE DOIs are not indexed by Europe PMC and resolve to nothing.
     fetchability: "partial",
-    ddgSite: "jove.com",
+    searchSite: "jove.com",
     journal: {
       crossrefContainer: "Journal of Visualized Experiments",
       europepmcJournal: "Journal of Visualized Experiments",
@@ -118,7 +118,7 @@ export const VENDORS: Vendor[] = [
     kind: "journal",
     // open-access full text via Europe PMC.
     fetchability: "full",
-    ddgSite: "bio-protocol.org",
+    searchSite: "bio-protocol.org",
     journal: {
       crossrefContainer: "Bio-protocol",
       europepmcJournal: "Bio-protocol",
@@ -133,7 +133,7 @@ export const VENDORS: Vendor[] = [
     kind: "journal",
     // open-access full text via Europe PMC.
     fetchability: "full",
-    ddgSite: "currentprotocols.onlinelibrary.wiley.com",
+    searchSite: "currentprotocols.onlinelibrary.wiley.com",
     journal: {
       crossrefContainer: "Current Protocols",
       europepmcJournal: "Current Protocols",
@@ -149,7 +149,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // public /view/ protocols extract via their .json; others do not.
     fetchability: "partial",
-    ddgSite: "protocols.io",
+    searchSite: "protocols.io",
     searchUrl: (q) => `https://www.protocols.io/search?q=${enc(q)}`,
   },
   {
@@ -159,7 +159,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
-    ddgSite: "thermofisher.com",
+    searchSite: "thermofisher.com",
     searchUrl: (q) =>
       `https://www.thermofisher.com/search/results?query=${enc(q)}&focusarea=Search%20All`,
   },
@@ -170,7 +170,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
-    ddgSite: "qiagen.com",
+    searchSite: "qiagen.com",
     searchUrl: (q) => `https://www.qiagen.com/us/search?q=${enc(q)}`,
   },
   {
@@ -183,7 +183,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // neb.com answers automated requests with 403.
     fetchability: "none",
-    ddgSite: "neb.com",
+    searchSite: "neb.com",
     searchUrl: (q) => `https://www.neb.com/en-us/search?searchValue=${enc(q)}`,
   },
   {
@@ -193,7 +193,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // most product pages extract; some category URLs 403.
     fetchability: "partial",
-    ddgSite: "bio-rad.com",
+    searchSite: "bio-rad.com",
     searchUrl: (q) => `https://www.bio-rad.com/en-us/search?text=${enc(q)}`,
   },
   {
@@ -203,7 +203,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // sigmaaldrich.com answers automated requests with 403.
     fetchability: "none",
-    ddgSite: "sigmaaldrich.com",
+    searchSite: "sigmaaldrich.com",
     searchUrl: (q) =>
       `https://www.sigmaaldrich.com/US/en/search/${enc(q)}?focus=products&type=product`,
   },
@@ -214,7 +214,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // emdmillipore.com answers automated requests with 403.
     fetchability: "none",
-    ddgSite: "emdmillipore.com",
+    searchSite: "emdmillipore.com",
     searchUrl: (q) =>
       `https://www.emdmillipore.com/US/en/search/-/Search?SearchTerm=${enc(q)}`,
   },
@@ -225,7 +225,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
-    ddgSite: "takarabio.com",
+    searchSite: "takarabio.com",
     searchUrl: (q) => `https://www.takarabio.com/search?q=${enc(q)}`,
   },
   {
@@ -235,7 +235,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
-    ddgSite: "promega.com",
+    searchSite: "promega.com",
     searchUrl: (q) => `https://www.promega.com/search/?q=${enc(q)}`,
   },
   {
@@ -245,7 +245,7 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // extracts once the country-cookie redirect gate is followed.
     fetchability: "full",
-    ddgSite: "idtdna.com",
+    searchSite: "idtdna.com",
     searchUrl: (q) => `https://www.idtdna.com/site/search?searchterm=${enc(q)}`,
   },
 ];

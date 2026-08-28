@@ -362,9 +362,18 @@ You can also use the published package:
 npx -y @mengbingrock/labee-protocol-searcher
 ```
 
-Optional provider keys improve search capacity, but the journal search and core
-open-access retrieval work without them. Copy `.env.example` to `.env` for the
-available settings. Never commit real credentials.
+Journal search and open-access retrieval need no keys — Crossref, Europe PMC,
+NCBI, OpenAlex and Unpaywall are all open. **Vendor search does need a key**:
+set `BRAVE_API_KEY`, or `GOOGLE_API_KEY` together with `GOOGLE_CSE_CX`. Without
+one, vendor sources return no results and say why, and you still get each
+vendor's deterministic on-site search URL to open yourself.
+
+(A keyless DuckDuckGo scraper used to fill that gap. It answered every request
+with HTTP 202 and a CAPTCHA for months, so it was removed rather than left in
+place to make an unkeyed install look like it was working.)
+
+Copy `.env.example` to `.env` for the available settings. Never commit real
+credentials.
 
 ### Useful commands
 

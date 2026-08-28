@@ -1,14 +1,21 @@
-// Selects which web-search providers are active, in priority order. Keyed APIs
-// (Brave, Google) come first because they're reliable and never CAPTCHA;
-// keyless DuckDuckGo is always present as the final fallback. An operator can
-// pin a single provider with PROTOCOLS_SEARCH_PROVIDER=brave|google|duckduckgo.
+// Selects which web-search providers are active, in priority order. Both are
+// keyed APIs; an operator can pin a single one with
+// PROTOCOLS_SEARCH_PROVIDER=brave|google.
+//
+// There is deliberately no keyless fallback. A DuckDuckGo scraper used to hold
+// that slot, but it answered every request with HTTP 202 and a CAPTCHA for
+// months — so an unkeyed install got silence dressed up as a working chain.
+// Vendor search now requires a key, and says so when it has none.
 
 import type { ProviderOptions, RawResult, WebProvider } from "./types.ts";
 import { braveProvider } from "./brave.ts";
 import { googleProvider } from "./google.ts";
-import { duckduckgoProvider } from "./duckduckgo.ts";
 
-const ALL: WebProvider[] = [braveProvider, googleProvider, duckduckgoProvider];
+const ALL: WebProvider[] = [braveProvider, googleProvider];
+
+/** Shown wherever an unkeyed install would otherwise just report "no results". */
+export const NO_PROVIDER_CONFIGURED =
+  "no web-search provider is configured — set BRAVE_API_KEY, or GOOGLE_API_KEY with GOOGLE_CSE_CX";
 
 /** The active providers, highest priority first. */
 export function activeProviders(): WebProvider[] {
@@ -17,7 +24,7 @@ export function activeProviders(): WebProvider[] {
     const chosen = ALL.find((p) => p.id === pin);
     if (chosen) return [chosen];
   }
-  // Keyed providers only when configured; DuckDuckGo is always available.
+  // Keyed providers only when configured — with no key, the set is empty.
   return ALL.filter((p) => p.available());
 }
 
@@ -64,6 +71,16 @@ export async function webSearch(
   const attempts: WebProviderOutcome[] = [];
   const errors: string[] = [];
   const merged = new Map<string, RawResult>();
+  // Without a key there is nothing to try. Say why, rather than returning an
+  // empty list the caller would report as "the vendor had no results".
+  if (providers.length === 0) {
+    return {
+      results: [],
+      provider: "none",
+      providers: ALL.map((p) => ({ id: p.id, status: "unavailable" as const, count: 0, elapsedMs: 0 })),
+      error: NO_PROVIDER_CONFIGURED,
+    };
+  }
   const pin = process.env.PROTOCOLS_SEARCH_PROVIDER?.trim().toLowerCase();
   if (!pin) {
     for (const provider of ALL) {
