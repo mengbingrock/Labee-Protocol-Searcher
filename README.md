@@ -260,11 +260,11 @@ run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-28T17:28Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-29T11:41Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
-❌ **2 backends not answering:** `semanticscholar`, `duckduckgo`. The chains fall through, so search still works as long as one provider per chain is up.
+✅ **All configured backends answered.**
 
 **Backends**
 
@@ -273,11 +273,10 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `crossref` | journal | ✅ 3 results |
 | `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
-| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
+| `semanticscholar` | journal | ✅ 3 results |
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
-| `duckduckgo` | web | ❌ duckduckgo: search returned HTTP 202 (via duckduckgo) |
 
 **Sources**
 
@@ -308,6 +307,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-29 | ✅ 6/6 | ✅ 16/16 | ⚠️ 10/16 | — | — |
 | 2026-08-28 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-27 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-26 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
