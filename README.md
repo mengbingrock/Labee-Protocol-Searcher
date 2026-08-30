@@ -260,11 +260,11 @@ run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-29T11:41Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-30T10:31Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
-✅ **All configured backends answered.**
+❌ **1 backend not answering:** `semanticscholar`. The chains fall through, so search still works as long as one provider per chain is up.
 
 **Backends**
 
@@ -273,7 +273,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `crossref` | journal | ✅ 3 results |
 | `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
-| `semanticscholar` | journal | ✅ 3 results |
+| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
@@ -299,7 +299,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
-**Per-DOI retrieval:** 28/48 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
+**Per-DOI retrieval:** 30/48 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -307,6 +307,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-30 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 | 2026-08-29 | ✅ 6/6 | ✅ 16/16 | ⚠️ 10/16 | — | — |
 | 2026-08-28 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-27 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
