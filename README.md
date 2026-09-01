@@ -260,7 +260,7 @@ run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-08-31T11:38Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-01T10:10Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
@@ -280,26 +280,11 @@ The scheduled run searches every declared protocol journal and vendor, then call
 
 **Sources**
 
-| Source | Declared `fetch` | Search hits | Top result `fetch` |
-| --- | --- | --- | --- |
-| `star-protocols` | ✅ full | ✅ 12 | ✅ `ok` · Europe PMC |
-| `nature-protocols` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
-| `jove` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
-| `bio-protocol` | ✅ full | ✅ 9 | ✅ `ok` · Europe PMC |
-| `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
-| `protocols-io` | ⚠️ partial | ✅ 3 | ❌ `not-fetchable` |
-| `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
-| `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
-| `neb` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
-| `bio-rad` | ⚠️ partial | ✅ 3 | ✅ `ok` · html extraction |
-| `sigma-aldrich` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
-| `emd-millipore` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
-| `takarabio` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
-| `promega` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
-| `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
-| `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
+❌ The full-catalog sweep failed: [labee-protocol-searcher] network: commercial 172.182.225.199 (network operator "AS8075 Microsoft Corporation")
 
-**Per-DOI retrieval:** 30/48 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
+probe exceeded 60000ms
+
+**Per-DOI retrieval:** 0/0 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -307,6 +292,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-01 | ⚠️ 5/6 | ❌ sweep failed | — | `semanticscholar` | — |
 | 2026-08-31 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 | 2026-08-30 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 | 2026-08-29 | ✅ 6/6 | ✅ 16/16 | ⚠️ 10/16 | — | — |
