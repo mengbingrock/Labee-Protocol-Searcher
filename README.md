@@ -260,7 +260,7 @@ run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-09T09:50Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-10T09:48Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
@@ -282,12 +282,12 @@ The scheduled run searches every declared protocol journal and vendor, then call
 
 | Source | Declared `fetch` | Search hits | Top result `fetch` |
 | --- | --- | --- | --- |
-| `star-protocols` | ✅ full | ✅ 12 | ✅ `ok` · Europe PMC |
+| `star-protocols` | ✅ full | ✅ 10 | ✅ `ok` · Europe PMC |
 | `nature-protocols` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · Europe PMC abstract |
 | `jove` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
 | `bio-protocol` | ✅ full | ✅ 9 | ✅ `ok` · Europe PMC |
 | `current-protocols` | ✅ full | ✅ 10 | ⚠️ `abstract-only` · Europe PMC abstract |
-| `protocols-io` | ⚠️ partial | ✅ 3 | ❌ `not-fetchable` |
+| `protocols-io` | ⚠️ partial | ✅ 3 | ✅ `ok` · pdf extraction |
 | `thermofisher` | ✅ full | ✅ 2 | ✅ `ok` · html extraction |
 | `qiagen` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `neb` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
@@ -299,7 +299,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ✅ 2 | ✅ `ok` · REBASE flat file |
 
-**Per-DOI retrieval:** 30/48 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
+**Per-DOI retrieval:** 29/46 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -307,6 +307,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-10 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar` | — |
 | 2026-09-09 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 | 2026-09-08 | ⚠️ 5/6 | ❌ sweep failed | — | `semanticscholar` | — |
 | 2026-09-07 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
@@ -336,7 +337,6 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-08-14 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-13 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-12 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
-| 2026-08-11 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
