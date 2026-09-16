@@ -260,13 +260,11 @@ run is:
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-15T10:08Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-16T10:00Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep.
 
 ❌ **1 backend not answering:** `semanticscholar`. The chains fall through, so search still works as long as one provider per chain is up.
-
-⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `idt` (graded `full` but the site refused the request).
 
 **Backends**
 
@@ -298,10 +296,10 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `emd-millipore` | ❌ none | ✅ 3 | ❌ `not-fetchable` |
 | `takarabio` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `promega` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
-| `idt` | ✅ full | ✅ 3 | ❌ `not-fetchable` |
+| `idt` | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `rebase` | ✅ full | ❌ fetch failed | — not probed |
 
-**Per-DOI retrieval:** 26/48 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
+**Per-DOI retrieval:** 25/48 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -309,6 +307,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-16 | ⚠️ 5/6 | ⚠️ 15/16 | ⚠️ 8/16 | `semanticscholar` | — |
 | 2026-09-15 | ⚠️ 5/6 | ⚠️ 15/16 | ⚠️ 7/16 | `semanticscholar` | `idt` |
 | 2026-09-14 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 | 2026-09-13 | ⚠️ 5/6 | ✅ 16/16 | ⚠️ 9/16 | `semanticscholar` | — |
@@ -338,7 +337,6 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-08-20 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-19 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
 | 2026-08-18 | ⚠️ 5/7 | ✅ 16/16 | ⚠️ 11/16 | `semanticscholar`, `duckduckgo` | — |
-| 2026-08-17 | ⚠️ 4/7 | ❌ sweep failed | — | `openalex`, `semanticscholar`, `duckduckgo` | — |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
