@@ -176,7 +176,10 @@ async function probeProvider(id, chain, env, source) {
   const run = async () => {
     const { json, stderr } = await search(
       ["--query", QUERY, "--sources", source, "--limit", "3"],
-      env,
+      // These rows measure the fallback backends themselves. If publisher
+      // Browserless stays enabled, a successful first-party search can mask
+      // the provider named by `id` and make this table claim it was tested.
+      { ...env, PROTOCOLS_BROWSERLESS: "off" },
     );
     const bucket = json?.sources?.[0];
     const count = bucket?.count ?? 0;
@@ -262,6 +265,9 @@ export function sourceProbeRows(declared, json) {
         kind: bucket?.kind ?? "unknown",
         declared: grade,
         count: bucket?.count ?? 0,
+        searchRoute: bucket?.route ?? "",
+        publisherStatus:
+          bucket?.providers?.find((provider) => provider.id === "publisher-browserless")?.status ?? "",
         searchError: bucket?.error || (bucket ? "" : "source missing from search response"),
         fetchStatus: "",
         tier: "",
@@ -337,6 +343,8 @@ async function probeSources(declared) {
     kind: "database",
     declared: declared.get("rebase") ?? "full",
     count: rbucket?.count ?? 0,
+    searchRoute: "rebase-flat-file",
+    publisherStatus: "",
     searchError: rbucket?.error || "",
     fetchStatus: "",
     tier: "REBASE flat file",
@@ -381,6 +389,18 @@ function sourceCell(row) {
   return `${BAD} ${row.searchError || "0"}`;
 }
 
+function searchRouteCell(row) {
+  if (row.searchRoute === "publisher-browserless") return `${OK} AWS Browserless`;
+  if (row.searchRoute === "publisher-browserless-residential") {
+    return `${OK} AWS Browserless · residential`;
+  }
+  if (row.searchRoute === "rebase-flat-file") return `${NA} REBASE flat file`;
+  if (row.searchRoute) return `${WARN} fallback · \`${row.searchRoute}\``;
+  if (row.publisherStatus === "unavailable") return `${BAD} Browserless not configured`;
+  if (row.publisherStatus) return `${BAD} publisher ${row.publisherStatus}`;
+  return `${BAD} unknown`;
+}
+
 function fetchCell(row) {
   if (!row.fetchStatus) return `${NA} not probed`;
   const icon = FULL_TEXT_STATUSES.has(row.fetchStatus) ? OK : row.fetchStatus === "not-fetchable" ? BAD : WARN;
@@ -397,6 +417,7 @@ const GRADE_LABEL = { full: "✅ full", partial: "⚠️ partial", none: "❌ no
 export function summarize(report) {
   const configured = report.providers.filter((p) => p.state !== "unconfigured");
   const sources = report.sources ?? [];
+  const publisherSources = sources.filter((s) => s.id !== "rebase");
   return {
     date: report.generatedAt.slice(0, 10),
     at: report.generatedAt,
@@ -406,6 +427,13 @@ export function summarize(report) {
     down: report.providers.filter((p) => p.state === "down").map((p) => p.id),
     sourcesWithHits: sources.filter((s) => s.count > 0).length,
     sourcesProbed: sources.length,
+    publisherSearches: publisherSources.filter((s) =>
+      s.searchRoute?.startsWith("publisher-browserless"),
+    ).length,
+    publisherSources: publisherSources.length,
+    residentialSearches: publisherSources.filter(
+      (s) => s.searchRoute === "publisher-browserless-residential",
+    ).length,
     fetchOk: sources.filter((s) => FULL_TEXT_STATUSES.has(s.fetchStatus)).length,
     doisTested: report.doiFetchability?.length ?? 0,
     doisWithFullText: (report.doiFetchability ?? []).filter((row) => FULL_TEXT_STATUSES.has(row.status)).length,
@@ -474,16 +502,24 @@ function renderHistory(records) {
     lines.push("_No runs recorded yet — the next daily run starts the log._");
     return lines;
   }
-  lines.push("| Date | Backends up | Sources with hits | Top result `fetch` ok | Down | Drift |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push(
+    "| Date | Backends up | Publisher search | Sources with hits | Top result `fetch` ok | Down | Drift |",
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
   for (const r of rows) {
     const sources = r.sweepFailed
       ? `${BAD} sweep failed`
       : ratio(r.sourcesWithHits, r.sourcesProbed);
     const fetched = r.sweepFailed ? NA : ratio(r.fetchOk, r.sourcesProbed);
+    const publisher = r.sweepFailed
+      ? NA
+      : r.publisherSources === undefined
+        ? NA
+        : `${ratio(r.publisherSearches, r.publisherSources)}` +
+          (r.residentialSearches ? ` (${r.residentialSearches} residential)` : "");
     const list = (ids) => (ids?.length ? ids.map((id) => `\`${id}\``).join(", ") : NA);
     lines.push(
-      `| ${r.date} | ${ratio(r.backendsUp, r.backendsConfigured)} | ${sources} | ${fetched} | ` +
+      `| ${r.date} | ${ratio(r.backendsUp, r.backendsConfigured)} | ${publisher} | ${sources} | ${fetched} | ` +
         `${list(r.down)} | ${list(r.drift)} |`,
     );
   }
@@ -511,7 +547,8 @@ function renderBlock(report, history = []) {
   lines.push(
     "The scheduled run searches every declared protocol journal and vendor, then calls `fetch` " +
       "for each source's top result. It additionally fetches every unique journal DOI returned " +
-      "by the sweep.",
+      "by the sweep. Publisher search uses the AWS Browserless deployment first; this report " +
+      "shows when a scholarly or web database had to answer instead.",
   );
   lines.push("");
 
@@ -548,11 +585,13 @@ function renderBlock(report, history = []) {
   if (searchError) {
     lines.push(`${BAD} The full-catalog sweep failed: ${searchError}`);
   } else {
-    lines.push("| Source | Declared `fetch` | Search hits | Top result `fetch` |");
-    lines.push("| --- | --- | --- | --- |");
+    lines.push("| Source | Search route | Declared `fetch` | Search hits | Top result `fetch` |");
+    lines.push("| --- | --- | --- | --- | --- |");
     for (const s of sources) {
       const grade = GRADE_LABEL[s.declared] ?? s.declared;
-      lines.push(`| \`${s.id}\` | ${grade} | ${sourceCell(s)} | ${fetchCell(s)} |`);
+      lines.push(
+        `| \`${s.id}\` | ${searchRouteCell(s)} | ${grade} | ${sourceCell(s)} | ${fetchCell(s)} |`,
+      );
     }
   }
   lines.push("");

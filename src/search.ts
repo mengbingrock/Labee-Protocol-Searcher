@@ -297,6 +297,8 @@ export interface SourceStatus {
   searchUrl?: string;
   /** Human-readable form of the query actually scoped to this source. */
   query?: string;
+  /** Route that supplied this source's results (publisher Browserless or fallback provider). */
+  route?: string;
   count: number;
   /** Per-backend status when this is a journal source. */
   providers?: SearchBackendOutcome[];
@@ -450,6 +452,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
       kind,
       searchUrl: b.searchUrl,
       ...(effectiveQuery ? { query: effectiveQuery } : {}),
+      ...(b.source ? { route: b.source } : {}),
       count: rows.length,
       ...(b.providers ? { providers: b.providers } : {}),
       ...(b.error ? { error: b.error } : {}),

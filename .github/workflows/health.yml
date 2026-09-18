@@ -1,9 +1,10 @@
 name: Backend health
 
-# Probes every third-party backend, searches every declared journal and vendor,
-# fetches a result from each source, and commits the measured result into the
-# README's health block. Runs daily because the failure mode this catches is a
-# provider changing behaviour on its own schedule, not a change to this repo.
+# Probes every fallback backend, searches every declared journal and vendor
+# through its own publisher page on AWS Browserless first, fetches a result from
+# each source, and commits the measured route and result into the README's health
+# block. Runs daily because the failure mode this catches is a provider changing
+# behaviour on its own schedule, not a change to this repo.
 #
 # Every run is also appended to health-history.jsonl, which separates "this broke
 # last night" from "this has been down for two weeks". Per-DOI outcomes appear in
@@ -43,6 +44,13 @@ jobs:
 
       - name: Probe backends and update README
         env:
+          # The full source sweep measures the production search order:
+          # publisher page on our AWS Browserless fork first, then the relevant
+          # scholarly/web database. Provider-only probes disable Browserless in
+          # the script so each fallback row still tests the backend it names.
+          BROWSERLESS_TOKEN: ${{ secrets.BROWSERLESS_TOKEN }}
+          BROWSERLESS_URL: ${{ vars.BROWSERLESS_URL }}
+          BROWSERLESS_TIMEOUT_MS: "30000"
           # Optional. Absent keys are reported as "not configured" rather than
           # as outages, so a fork without secrets still gets a truthful table.
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}

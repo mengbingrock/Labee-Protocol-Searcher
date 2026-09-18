@@ -1,5 +1,8 @@
 # Labee Protocol Searcher
 
+[![CI](https://github.com/mengbingrock/Labee-Protocol-Searcher/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mengbingrock/Labee-Protocol-Searcher/actions/workflows/ci.yml)
+[![Daily publisher health](https://github.com/mengbingrock/Labee-Protocol-Searcher/actions/workflows/health.yml/badge.svg?branch=main)](https://github.com/mengbingrock/Labee-Protocol-Searcher/actions/workflows/health.yml)
+
 ## Find lab protocols your AI assistant can actually use
 
 Labee helps researchers move from a scientific question to useful protocol
@@ -317,17 +320,12 @@ linked source and your laboratory’s approved practices.
 ## Current service transparency
 
 Labee's daily CI uses the production CLI to search every declared protocol
-journal and vendor and fetch a result from each one. It also fetches every
-unique journal DOI returned by the sweep. The generated per-source matrix below
-is written back into this README. The customer-facing summary from the latest
-run is:
-
-- all 16 supported sources returned search results;
-- 47 individual papers were tested for access;
-- 24 returned full text, 14 returned abstracts, 7 returned open-access links,
-  and 2 were not found by the available retrieval routes;
-- temporary trouble with one search provider does not stop the remaining
-  providers from being checked.
+journal and vendor through its publisher page on AWS Browserless first, records
+any scholarly or site-scoped fallback that was needed, and fetches a result from
+each source. It also fetches every unique journal DOI returned by the sweep. The
+badges above show the current build and daily-probe workflow results; the
+generated per-source matrix below is written back into this README. The latest
+completed run—including the route used for every source—is shown below.
 
 <details>
 <summary>View the detailed daily reliability record</summary>

@@ -69,11 +69,26 @@ describe("sourceProbeRows", () => {
       ["rebase", "full"],
     ]);
     const rows = sourceProbeRows(declared, {
-      sources: [{ id: "star-protocols", name: "STAR Protocols", kind: "journal", count: 3 }],
+      sources: [
+        {
+          id: "star-protocols",
+          name: "STAR Protocols",
+          kind: "journal",
+          count: 3,
+          route: "publisher-browserless",
+          providers: [{ id: "publisher-browserless", status: "ok" }],
+        },
+      ],
     });
 
     expect(rows).toEqual([
-      expect.objectContaining({ id: "star-protocols", count: 3, searchError: "" }),
+      expect.objectContaining({
+        id: "star-protocols",
+        count: 3,
+        searchRoute: "publisher-browserless",
+        publisherStatus: "ok",
+        searchError: "",
+      }),
       expect.objectContaining({
         id: "neb",
         count: 0,
@@ -143,6 +158,7 @@ describe("renderBlock", () => {
     expect(md).toContain("2026-01-01T00:00Z");
     expect(md).toContain("PCR purification");
     expect(md).toContain("searches every declared protocol journal and vendor");
+    expect(md).toContain("| Source | Search route | Declared `fetch`");
   });
 
   it("names drifted sources so the grade gets re-checked", () => {
@@ -187,14 +203,29 @@ describe("summarize", () => {
     const row = summarize({
       ...report,
       sources: [
-        { id: "a", count: 3, fetchStatus: "ok", drift: "" },
-        { id: "b", count: 0, fetchStatus: "not-fetchable", drift: "graded `full` but refused" },
+        {
+          id: "a",
+          count: 3,
+          searchRoute: "publisher-browserless",
+          fetchStatus: "ok",
+          drift: "",
+        },
+        {
+          id: "b",
+          count: 0,
+          searchRoute: "brave",
+          fetchStatus: "not-fetchable",
+          drift: "graded `full` but refused",
+        },
       ],
     });
     expect(row).toMatchObject({
       sourcesProbed: 2,
       sourcesWithHits: 1,
       fetchOk: 1,
+      publisherSearches: 1,
+      publisherSources: 2,
+      residentialSearches: 0,
       drift: ["b"],
       sweepFailed: false,
     });
@@ -295,6 +326,9 @@ describe("renderHistory", () => {
     sourcesWithHits: 16,
     sourcesProbed: 16,
     fetchOk: 12,
+    publisherSearches: 14,
+    publisherSources: 15,
+    residentialSearches: 1,
     drift: [],
     sweepFailed: false,
   };
@@ -306,6 +340,7 @@ describe("renderHistory", () => {
     expect(md).toContain("| 2026-01-02 |");
     expect(md).toContain("| 2026-01-01 |");
     expect(md).toContain("5/7");
+    expect(md).toContain("14/15 (1 residential)");
     expect(md).toContain("`semanticscholar`");
   });
 
