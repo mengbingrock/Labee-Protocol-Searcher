@@ -51,6 +51,10 @@ jobs:
           BROWSERLESS_TOKEN: ${{ secrets.BROWSERLESS_TOKEN }}
           BROWSERLESS_URL: ${{ vars.BROWSERLESS_URL }}
           BROWSERLESS_TIMEOUT_MS: "30000"
+          # The all-source CLI process renders 15 publisher searches with
+          # bounded concurrency. Its aggregate budget must be longer than one
+          # page's 30-second Browserless budget.
+          HEALTH_TIMEOUT_MS: "600000"
           # Optional. Absent keys are reported as "not configured" rather than
           # as outages, so a fork without secrets still gets a truthful table.
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
