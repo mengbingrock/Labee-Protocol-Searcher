@@ -26,7 +26,7 @@ codex plugin add labee-protocol-searcher@labee_market
 
 Start a new Codex conversation after installation so the plugin's tools and
 skill are loaded. The plugin downloads the pinned public npm release
-`@mengbingrock/labee-protocol-searcher@0.4.1` when its MCP server starts.
+`@mengbingrock/labee-protocol-searcher@0.5.0` when its MCP server starts.
 
 ## The problems Labee solves
 
