@@ -5,7 +5,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@mengbingrock/labee-protocol-searcher@0.4.2"
+        "@mengbingrock/labee-protocol-searcher@0.5.0"
       ]
     }
   }
