@@ -36,7 +36,7 @@ skill are loaded. The plugin downloads the pinned public npm release
 | What slows researchers down | How Labee helps |
 | --- | --- |
 | Protocols are scattered across journals, supplier sites, and databases. | One request searches all supported sources and presents the results together. |
-| Publisher and supplier search pages often block automation or hide results behind interactive pages. | Labee uses several independent discovery routes and keeps a direct source link when a page cannot be read automatically. |
+| Publisher and supplier search pages often block automation or hide results behind interactive pages. | Labee renders each publisher's own search first through AWS Browserless, then uses scholarly or site-scoped search only when that first-party route returns no credible result. |
 | A promising search result may lead to a paywall, an abstract, or a broken page. | Every result says what Labee expects to be readable, and every retrieval reports what it actually got — the two are never conflated. |
 | One literature index can miss an important paper or be temporarily unavailable. | Labee checks multiple scholarly indexes and combines their findings instead of stopping after the first successful search. |
 | A source can change or break without warning. | Daily CI searches every declared journal and vendor, fetches a result from each, and publishes the per-source outcome in this README. |
@@ -60,6 +60,29 @@ supplier, or protocol step.
 
 Results from protocol journals, community repositories, suppliers, and REBASE
 appear in one response. Duplicate papers found by several indexes are combined.
+
+### Publisher-first search and fetch
+
+For every protocol journal and supplier, Labee follows the same production
+order:
+
+1. Render the publisher's own search page through the self-hosted AWS
+   Browserless service. Ordinary pages use `/content`; `/function` is reserved
+   for publishers that require form interaction and for IDT's Shadow DOM
+   results.
+2. Wait up to 30 seconds for client-rendered results, reject navigation links,
+   challenge pages, and soft 404s, and keep only URLs matching that publisher's
+   known result shape.
+3. If publisher search fails, use scholarly indexes for journals or a
+   site-scoped Brave/Google query for suppliers.
+4. Fetch a selected publisher page through Browserless first. If that render
+   fails and an explicitly enabled local residential exit is registered, retry
+   through that exit; then fall through to the source's legal direct/API
+   alternatives.
+
+Each source in JSON output includes the route that actually supplied its
+results. The daily matrix below publishes the same route, so a fallback is
+visible instead of being reported as a successful publisher search.
 
 ### Honest access information
 
@@ -113,8 +136,10 @@ on a section such as Methods, Materials, Procedure, or Troubleshooting. If full
 text is unavailable, it returns the best legal alternative it can find rather
 than pretending the retrieval succeeded.
 
-Labee does not bypass paywalls, authentication, CAPTCHAs, robots restrictions,
-or other access controls.
+Labee does not bypass paywalls, authentication, robots restrictions, or other
+access controls. The self-hosted Browserless operator may configure challenge
+solving for public anti-bot pages; that does not authenticate, create an
+entitlement, or change the content's licence.
 
 ### Optional default-profile browser for local Labee
 
@@ -146,20 +171,25 @@ help a headless server or CI. Setting `BROWSERLESS_TOKEN` enables the remote
 browser used as the **primary publisher search and publisher-page fetch
 route**. It renders each publisher's own search page first; scholarly or
 site-scoped web databases run only when that publisher search fails. Publisher
-result pages also use Browserless first, with ordinary HTTP as fallback. What
-it recovers has changed over time, so the measurements
-are dated. On 2026-08-28 the hosted browserless.io `/unblock` endpoint
-retrieved all three sources graded `links-only`; by 2026-09-17 it retrieved
-only `neb.com` (about 7 seconds), while `sigmaaldrich.com` and
-`emdmillipore.com` answered every remote path — hosted, self-hosted, and a
-residential exit — with an Akamai denial or an HTTP/2 rejection. Those two are
-still readable with the local `--browser default` mode above, which drives a
-real Chrome; the block is on the client fingerprint, not the network.
+result pages also use Browserless first, with ordinary HTTP as fallback.
 
-NEB search is recovered through the self-hosted Browserless residential retry;
-the selected NEB product/protocol page normally fetches through the datacenter
-route. Its PDF manuals under `/-/media/` remain directly fetchable and are
-listed ahead of equivalent HTML pages when a fallback web search finds both.
+The self-hosted AWS fork uses `/content` for normal pages and `/function` only
+when it must submit an interactive search form or traverse open Shadow DOM. It
+allows a 30-second render settle window and requests the server's configured
+public-page challenge solver. Hosted browserless.io is a different codebase:
+its `/unblock` route remains supported for page retrieval, but it is not used
+for publisher search and cannot use the residential-exit extension.
+
+Observed reach changes over time, so the daily record is authoritative. In the
+2026-09-18 production run, first-party AWS Browserless search supplied 9 of 15
+publisher sources. STAR Protocols, JoVE, Current Protocols, NEB, Sigma-Aldrich,
+and EMD Millipore used their configured database/web fallbacks. Even though
+Sigma-Aldrich and EMD search fell back, Browserless successfully fetched the
+selected product pages; the report flags that as grade drift rather than
+silently rewriting a long-term reliability claim from one observation.
+
+NEB PDF manuals under `/-/media/` remain directly fetchable and are listed
+ahead of equivalent HTML pages when a fallback web search finds both.
 
 Two limits are deliberate. Results are labelled `display-only-full-text` rather
 than `ok`, because a page that needed a remote browser is not the same evidence
@@ -327,6 +357,19 @@ badges above show the current build and daily-probe workflow results; the
 generated per-source matrix below is written back into this README. The latest
 completed run—including the route used for every source—is shown below.
 
+Latest measured result (2026-09-18):
+
+| Check | Result |
+| --- | --- |
+| Build/typecheck/test CI | ✅ Passed ([run](https://github.com/mengbingrock/Labee-Protocol-Searcher/actions/runs/35406749206)) |
+| Publisher-health workflow | ✅ Passed in 9m19s ([run](https://github.com/mengbingrock/Labee-Protocol-Searcher/actions/runs/35406753346)) |
+| First-party publisher search | ⚠️ 9/15 publishers; the other 6 used declared fallbacks |
+| Search coverage | ⚠️ 15/16 sources returned hits; the REBASE probe failed in this run |
+| Top-result full-text fetch | ⚠️ 13/16 sources |
+| Journal DOI retrieval | ⚠️ 14/25 returned full text |
+| Fallback backend health | ⚠️ 5/6 configured backends answered; Semantic Scholar returned HTTP 429 |
+| Notable change | Sigma-Aldrich and EMD Millipore product pages fetched successfully through Browserless after fallback search; both remain flagged for re-grading until the result is repeatable |
+
 <details>
 <summary>View the detailed daily reliability record</summary>
 
@@ -439,11 +482,12 @@ You can also use the published package:
 npx -y @mengbingrock/labee-protocol-searcher
 ```
 
-Journal search and open-access retrieval need no keys — Crossref, Europe PMC,
-NCBI, OpenAlex and Unpaywall are all open. **Vendor search does need a key**:
-set `BRAVE_API_KEY`, or `GOOGLE_API_KEY` together with `GOOGLE_CSE_CX`. Without
-one, vendor sources return no results and say why, and you still get each
-vendor's deterministic on-site search URL to open yourself.
+Journal fallback search and open-access retrieval need no keys — Crossref,
+Europe PMC, NCBI, OpenAlex and Unpaywall are all open. Publisher-first search
+requires `BROWSERLESS_TOKEN`. Vendor fallback search requires `BRAVE_API_KEY`,
+or `GOOGLE_API_KEY` together with `GOOGLE_CSE_CX`. Without those web-search
+keys, a vendor can still return first-party Browserless results; only a failed
+publisher search loses its web fallback, and the response says why.
 
 (A keyless DuckDuckGo scraper used to fill that gap. It answered every request
 with HTTP 202 and a CAPTCHA for months, so it was removed rather than left in
@@ -465,8 +509,9 @@ npm run health
 
 | Area | Location |
 | --- | --- |
-| Search and source coverage | `src/search.ts`, `src/journals.ts`, `src/providers/` |
+| Publisher-first search and source coverage | `src/search.ts`, `src/publisher-search.ts`, `src/journals.ts`, `src/providers/` |
 | Content retrieval | `src/fetch.ts`, `src/fulltext.ts`, `src/extract.ts` |
+| AWS Browserless and residential retry | `src/browserless.ts`, `src/residential.ts`, `src/residential/` |
 | Browser-assisted retrieval | `src/agent/` |
 | MCP and hosted transport | `src/mcp.ts`, `src/http.ts` |
 | Daily reliability checks | `scripts/health-check.mjs`, `.github/workflows/health.yml` |
