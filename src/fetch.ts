@@ -52,6 +52,17 @@ async function fetchWebPage(url: string, opts: FetchOptions): Promise<string> {
   if (!/^https?:\/\//i.test(url)) return notFetchable(url);
   const extracted = await extractOaContent(url, opts, WEB_PAGE_MAX_CHARS);
   if (!extracted?.text?.trim()) return notFetchable(url);
+  // A vendor page carries no licence signal either way, but how it was obtained
+  // still differs: content a plain request returned is `ok`, while content that
+  // needed a remote browser gets the same label the local browser adapters use.
+  // Reporting the second as `ok` would erase that distinction for the caller.
+  if (extracted.via === "browserless") {
+    return withStatus(
+      `_Source: ${url} (read in a remote browser; no redistribution licence was detected)._` +
+        `\n\n${extracted.text}`,
+      "display-only-full-text",
+    );
+  }
   return withStatus(`_Source: ${url} (${extracted.format} extraction)._\n\n${extracted.text}`, "ok");
 }
 

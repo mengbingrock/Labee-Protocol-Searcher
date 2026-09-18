@@ -44,12 +44,14 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.13",
+    "@types/ws": "^8.18.1",
     "tsdown": "^0.20.3",
     "typescript": "^5.7.3",
     "vitest": "^4.0.0"
   },
   "dependencies": {
     "playwright-core": "^1.62.1",
-    "unpdf": "^1.6.2"
+    "unpdf": "^1.6.2",
+    "ws": "^8.21.3"
   }
 }

@@ -12,6 +12,7 @@ import {
   renderBlock,
   renderHistory,
   sourceProbeRows,
+  probeGrade,
   spliceBlock,
   statusOf,
   summarize,
@@ -342,5 +343,24 @@ describe("spliceBlock", () => {
 
   it("throws when the markers are missing rather than appending silently", () => {
     expect(() => spliceBlock("# Title\n\nno markers here\n", "new")).toThrow(/missing the/);
+  });
+});
+
+// NEB declares its PDF manuals as ungated, so search grades that result `full`
+// and lists it first. The probe fetches that top result and gets `ok`; judged
+// against the vendor's `none` that would read as drift every single day.
+describe("probeGrade", () => {
+  it("judges a vendor probe against the result's own grade, not the catalog's", () => {
+    const top = { id: "url:https://www.neb.com/x/manual.pdf", kind: "vendor-page", fetchable: "full" };
+    expect(probeGrade("none", top)).toBe("full");
+    expect(driftOf({ declared: probeGrade("none", top), fetchStatus: "ok" })).toBe("");
+  });
+
+  it("keeps the catalog grade for journals and when there is no result", () => {
+    const article = { id: "doi:10.1/x", kind: "article", fetchable: "full" };
+    expect(probeGrade("partial", article)).toBe("partial");
+    expect(probeGrade("none", undefined)).toBe("none");
+    // A vendor page carrying the same grade as its catalog changes nothing.
+    expect(probeGrade("none", { id: "url:https://www.neb.com/p", kind: "vendor-page", fetchable: "none" })).toBe("none");
   });
 });

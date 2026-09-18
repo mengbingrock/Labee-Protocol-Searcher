@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { directPdfUrl, displayOnlyPdfUrl, getProtocolFulltext, pmcidFromUrl } from "../src/fulltext.ts";
+import { resetEntitlementCache } from "../src/entitlement.ts";
+import { detectNetworkContext, resetNetworkContext } from "../src/network-context.ts";
 
 const searchHit = (extra: Record<string, unknown>) =>
   JSON.stringify({ resultList: { result: [{ id: "123", source: "MED", title: "My Protocol", ...extra }] } });
@@ -467,5 +469,75 @@ describe("directPdfUrl", () => {
 
   it("declines undefined", () => {
     expect(directPdfUrl(undefined)).toBeNull();
+  });
+});
+
+// The entitled tier runs ahead of every open-access tier, so a subscribing
+// network gets the publisher's own copy even when PMC holds an open one. That
+// ordering is a deliberate trade (see the header of src/fulltext.ts) and is
+// pinned here so a refactor cannot quietly restore open-access-first.
+describe("getProtocolFulltext — entitled retrieval is the first retrieval tier", () => {
+  const env = { ...process.env };
+  afterEach(() => {
+    process.env = { ...env };
+    resetEntitlementCache();
+    resetNetworkContext();
+  });
+
+  const ENTITLED_PDF = `Materials and Methods. ${"Add 5 µl of buffer and incubate at 37 °C for 30 min. ".repeat(60)}`;
+
+  /** An academic network whose institution subscribes to the journal. */
+  function academicRouter(seen: string[]): typeof fetch {
+    return (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/search")) {
+        return new Response(
+          searchHit({ pmcid: "PMC999", doi: "10.1/x", journalInfo: { journal: { title: "J Prot" } } }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("doi.org")) {
+        return new Response(`<html><body>${ENTITLED_PDF}</body></html>`, {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response(FULLTEXT_XML, { status: 200 });
+    }) as unknown as typeof fetch;
+  }
+
+  it("returns the publisher copy without consulting the PMC full-text tier", async () => {
+    process.env.PROTOCOLS_NETWORK_KIND = "academic";
+    delete process.env.PROTOCOLS_ENTITLED_FETCH;
+    await detectNetworkContext();
+    const seen: string[] = [];
+    const out = await getProtocolFulltext("10.1/x", { fetchImpl: academicRouter(seen) });
+
+    expect(out).toContain("_status: entitled-full-text_");
+    expect(out).toContain("NOT open access");
+    // The open tier below it was never reached, even though PMC999 was on offer.
+    expect(seen.some((url) => url.includes("fullTextXML"))).toBe(false);
+  });
+
+  it("still prefers open access when the entitled tier is switched off", async () => {
+    process.env.PROTOCOLS_NETWORK_KIND = "academic";
+    process.env.PROTOCOLS_ENTITLED_FETCH = "off";
+    await detectNetworkContext();
+    const seen: string[] = [];
+    const out = await getProtocolFulltext("10.1/x", { fetchImpl: academicRouter(seen) });
+
+    expect(out).toContain("_status: ok_");
+    expect(out).toContain("Step 1: mix the reagents.");
+    expect(seen.some((url) => url.includes("doi.org"))).toBe(false);
+  });
+
+  it("does not attempt the publisher copy off an academic network", async () => {
+    process.env.PROTOCOLS_NETWORK_KIND = "commercial";
+    await detectNetworkContext();
+    const seen: string[] = [];
+    const out = await getProtocolFulltext("10.1/x", { fetchImpl: academicRouter(seen) });
+
+    expect(out).toContain("_status: ok_");
+    expect(seen.some((url) => url.includes("doi.org"))).toBe(false);
   });
 });
