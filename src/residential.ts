@@ -33,8 +33,46 @@ import { hostname } from "node:os";
 
 import {
   ResidentialProxyAgent,
+  hostMatchesAllowlist,
   makeResidentialProxyAgentId,
 } from "./residential/agent.ts";
+import { VENDORS } from "./vendors.ts";
+
+/**
+ * The hosts this exit will carry when RESIDENTIAL_PROXY_ALLOW_HOSTS is unset:
+ * every source in the catalog, as `*.host` so subdomains match.
+ *
+ * Not `*`, for two reasons that were measured rather than assumed
+ * (2026-09-17). First, a headless Chrome opens several background connections
+ * per render — Google update and telemetry endpoints — and with `*` every one
+ * of them takes a slot on this agent; at the default of 8 that usually leaves
+ * room for the real target, at 4 it never did, and the target's CONNECT was
+ * refused as `ERR_TUNNEL_CONNECTION_FAILED`. A narrow allowlist makes those
+ * CONNECTs fail immediately without occupying a slot. Second, this lends out
+ * a network connection, and the sensible default is to lend it only for the
+ * sites this tool actually fetches.
+ */
+export function catalogAllowHosts(): string[] {
+  const hosts = new Set<string>();
+  for (const vendor of VENDORS) {
+    const host = vendor.searchSite.split("/")[0]!.toLowerCase().replace(/^www\./, "");
+    if (host) hosts.add(`*.${host}`);
+  }
+  // Dependencies required by the measured publisher search flows. NEB's
+  // result UI is served by Coveo; Cell/STAR uses Cloudflare challenges; JoVE,
+  // QIAGEN and Promega load Google/reCAPTCHA assets. Keep this explicit rather
+  // than widening the exit to arbitrary hosts.
+  for (const host of [
+    "*.coveo.com",
+    "*.cloudflare.com",
+    "*.google.com",
+    "*.gstatic.com",
+    "*.recaptcha.net",
+  ]) {
+    hosts.add(host);
+  }
+  return [...hosts];
+}
 
 /** Lower than the upstream default of 20: this is somebody's laptop. */
 const DEFAULT_MAX_CONNECTIONS = 8;
@@ -131,10 +169,12 @@ export function residentialConfig(
       ? configuredMax
       : DEFAULT_MAX_CONNECTIONS;
 
-  const allowHosts = (env.RESIDENTIAL_PROXY_ALLOW_HOSTS ?? "*")
-    .split(",")
-    .map((h) => h.trim())
-    .filter(Boolean);
+  // An explicit setting is the operator's call, `*` included. Absent one, the
+  // catalog is the allowlist — see catalogAllowHosts for why not `*`.
+  const configuredHosts = optional(env.RESIDENTIAL_PROXY_ALLOW_HOSTS);
+  const allowHosts = configuredHosts
+    ? configuredHosts.split(",").map((h) => h.trim()).filter(Boolean)
+    : catalogAllowHosts();
 
   const safeHostname = hostname().replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 40);
   const id =
@@ -170,6 +210,51 @@ export function activeResidentialSelector(): ResidentialSelector | null {
     country: activeConfig.country,
     region: activeConfig.region,
   };
+}
+
+/** Whether the registered exit would carry a connection to this URL's host. */
+export function residentialAllows(url: string): boolean {
+  if (!activeConfig) return false;
+  try {
+    return hostMatchesAllowlist(new URL(url).hostname, activeConfig.allowHosts);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The selector for a render of `url`, or null when the render should leave
+ * from the server's own address instead.
+ *
+ * A host outside this exit's allowlist must not be routed residentially: the
+ * agent would refuse the CONNECT and the whole render would fail, where a
+ * datacenter render might have succeeded. That case is real — the open-access
+ * tiers in fulltext.ts hand this fallback arbitrary publisher and repository
+ * URLs, none of which are in the catalog.
+ */
+export function residentialSelectorFor(url: string): ResidentialSelector | null {
+  return residentialAllows(url) ? activeResidentialSelector() : null;
+}
+
+/**
+ * Wait, bounded, for the exit to finish registering. Registration is
+ * asynchronous and the first fetch after startup used to lose the race and go
+ * out from the datacenter — which is not an error, just not what the operator
+ * enabled the exit for. Resolves false at once when no exit is configured, so
+ * the common case costs nothing.
+ */
+export async function awaitResidentialReady(timeoutMs: number): Promise<boolean> {
+  // Hold the agent we started waiting on. A stopped agent clears `active`
+  // asynchronously, so reading the module variable inside the loop would race
+  // that teardown; if the active agent changes, this wait is void.
+  const agent = active;
+  if (!agent) return false;
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (!agent.connected) {
+    if (active !== agent || Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return active === agent;
 }
 
 /**

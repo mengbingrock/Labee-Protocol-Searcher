@@ -1,16 +1,10 @@
 // The catalog of laboratory-protocol / reagent sources this server can search.
 //
-// Sources come in two kinds:
-//   - "journal": peer-reviewed protocol journals (STAR Protocols, Nature
-//     Protocols). These are indexed by scholarly APIs (Crossref, Europe PMC)
-//     that are free, keyless, and reliable — far better than scraping the
-//     publisher sites, which paywall/bot-block. See journals.ts.
-//   - "vendor": reagent/instrument vendors. Their search pages render results
-//     with JavaScript and several bot-block automated fetches, so we *search*
-//     them through a keyed web-search provider (Brave or Google) scoped with a
-//     `site:` filter. Without a key there is no vendor search. See providers/.
-//     Retrieving a result page afterwards is a separate question — most vendors
-//     extract fine, a few always 403 — which is what `fetchability` records.
+// Every publisher is searched on its own site first through the configured AWS
+// Browserless deployment. Scholarly indexes (journals) and site-scoped web
+// search (vendors) are fallbacks only. `publisherResult` identifies genuine
+// result links in the rendered publisher page; navigation/header links are not
+// accepted merely because they share the same hostname.
 //
 // Every source also exposes searchUrl(query): a deterministic, always-valid
 // deep link into its own search page. It never fails and never gets bot-
@@ -42,6 +36,16 @@ export interface JournalInfo {
  */
 export type Fetchability = "full" | "partial" | "none";
 
+export type PublisherFetch = "full" | "abstract-only" | "blocked";
+
+export interface InteractivePublisherSearch {
+  /** Page containing the publisher's visible search input. */
+  startUrl: string;
+  /** Optional exact selectors; Browserless otherwise finds the visible search field. */
+  inputSelector?: string;
+  submitSelector?: string;
+}
+
 export interface Vendor {
   /** Stable id used in tool arguments and CLI flags. */
   id: string;
@@ -49,10 +53,12 @@ export interface Vendor {
   name: string;
   /** What this source is good for (shown to the model so it can pick well). */
   blurb: string;
-  /** "journal" → scholarly APIs; "vendor" → web-search provider. */
+  /** Source category; it determines which fallback runs after publisher search. */
   kind: "journal" | "vendor";
   /** Expected outcome of `fetch` on this source's results. */
   fetchability: Fetchability;
+  /** Measured result of fetching the publisher page itself through Browserless. */
+  publisherFetch: PublisherFetch;
   /**
    * URL shapes this source serves to a plain request even though its pages in
    * general do not. A matching result is graded `full` regardless of
@@ -69,6 +75,14 @@ export interface Vendor {
   journal?: JournalInfo;
   /** Build the source's own on-site search URL for `query`. */
   searchUrl: (query: string) => string;
+  /** URL shape of a genuine result on the publisher's rendered search page. */
+  publisherResult: RegExp;
+  /** Optional result-link class needed to exclude same-host navigation links. */
+  publisherResultClass?: RegExp;
+  /** Publishers whose current search UI must be submitted interactively. */
+  interactiveSearch?: InteractivePublisherSearch;
+  /** Result links are rendered inside open shadow roots (currently IDT). */
+  shadowSearch?: boolean;
 }
 
 const enc = encodeURIComponent;
@@ -81,6 +95,7 @@ export const VENDORS: Vendor[] = [
     kind: "journal",
     // open-access full text via Europe PMC.
     fetchability: "full",
+    publisherFetch: "full",
     searchSite: "cell.com/star-protocols",
     journal: {
       crossrefContainer: "STAR Protocols",
@@ -88,7 +103,8 @@ export const VENDORS: Vendor[] = [
       issn: ["2666-1667"],
     },
     searchUrl: (q) =>
-      `https://www.cell.com/action/doSearch?journalCode=star-protocols&field1=AllField&text1=${enc(q)}`,
+      `https://www.cell.com/action/doSearch?type=quicksearch&text1=${enc(q)}&field1=AllField&journalCode=xpro&SeriesKey=xpro`,
+    publisherResult: /^https?:\/\/(?:www\.)?cell\.com\/star-protocols\/fulltext\//i,
   },
   {
     id: "nature-protocols",
@@ -98,6 +114,7 @@ export const VENDORS: Vendor[] = [
     // Mostly paywalled, but ~26% of the journal is deposited in PMC as author
     // manuscripts that NCBI serves in full; the rest returns the abstract.
     fetchability: "partial",
+    publisherFetch: "abstract-only",
     searchSite: "nature.com/nprot",
     journal: {
       crossrefContainer: "Nature Protocols",
@@ -105,6 +122,7 @@ export const VENDORS: Vendor[] = [
       issn: ["1750-2799", "1754-2189"],
     },
     searchUrl: (q) => `https://www.nature.com/search?journal=nprot&q=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?nature\.com\/articles\//i,
   },
   {
     id: "jove",
@@ -113,6 +131,7 @@ export const VENDORS: Vendor[] = [
     kind: "journal",
     // many JoVE DOIs are not indexed by Europe PMC and resolve to nothing.
     fetchability: "partial",
+    publisherFetch: "blocked",
     searchSite: "jove.com",
     journal: {
       crossrefContainer: "Journal of Visualized Experiments",
@@ -120,29 +139,34 @@ export const VENDORS: Vendor[] = [
       issn: ["1940-087X"],
     },
     searchUrl: (q) => `https://www.jove.com/search?query=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?jove\.com\/(?:t|v)\//i,
   },
   {
     id: "bio-protocol",
     name: "Bio-protocol",
     blurb: "Peer-reviewed, community-contributed step-by-step life-science protocols.",
     kind: "journal",
-    // open-access full text via Europe PMC.
-    fetchability: "full",
+    // Search is public, while article pages currently trip SafeLine; scholarly
+    // metadata and the deterministic publisher PDF remain useful fallbacks.
+    fetchability: "partial",
+    publisherFetch: "blocked",
     searchSite: "bio-protocol.org",
     journal: {
       crossrefContainer: "Bio-protocol",
       europepmcJournal: "Bio-protocol",
       issn: ["2331-8325"],
     },
-    searchUrl: (q) => `https://bio-protocol.org/en/search?keyword=${enc(q)}`,
+    searchUrl: (q) => `https://bio-protocol.org/en/searchlist?content=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?bio-protocol\.org\/en\/bpdetail\?/i,
+    interactiveSearch: { startUrl: "https://bio-protocol.org/en" },
   },
   {
     id: "current-protocols",
     name: "Current Protocols (Wiley)",
     blurb: "Comprehensive, regularly-updated protocols across life-science methods.",
     kind: "journal",
-    // open-access full text via Europe PMC.
-    fetchability: "full",
+    fetchability: "partial",
+    publisherFetch: "abstract-only",
     searchSite: "currentprotocols.onlinelibrary.wiley.com",
     journal: {
       crossrefContainer: "Current Protocols",
@@ -151,6 +175,7 @@ export const VENDORS: Vendor[] = [
     },
     searchUrl: (q) =>
       `https://currentprotocols.onlinelibrary.wiley.com/action/doSearch?AllField=${enc(q)}`,
+    publisherResult: /^https?:\/\/currentprotocols\.onlinelibrary\.wiley\.com\/doi\//i,
   },
   {
     id: "protocols-io",
@@ -158,9 +183,11 @@ export const VENDORS: Vendor[] = [
     blurb: "Open-access repository of step-by-step protocols (community + published, with DOIs).",
     kind: "vendor",
     // public /view/ protocols extract via their .json; others do not.
-    fetchability: "partial",
+    fetchability: "full",
+    publisherFetch: "full",
     searchSite: "protocols.io",
     searchUrl: (q) => `https://www.protocols.io/search?q=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?protocols\.io\/view\//i,
   },
   {
     id: "thermofisher",
@@ -169,9 +196,11 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
+    publisherFetch: "full",
     searchSite: "thermofisher.com",
     searchUrl: (q) =>
       `https://www.thermofisher.com/search/results?query=${enc(q)}&focusarea=Search%20All`,
+    publisherResult: /^https?:\/\/(?:www\.)?thermofisher\.com\/order\/catalog\/product\//i,
   },
   {
     id: "qiagen",
@@ -180,8 +209,10 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
+    publisherFetch: "full",
     searchSite: "qiagen.com",
     searchUrl: (q) => `https://www.qiagen.com/us/search?q=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?qiagen\.com\/(?:[a-z]{2}\/)?products\//i,
   },
   {
     id: "neb",
@@ -197,10 +228,13 @@ export const VENDORS: Vendor[] = [
     // extracted to 24k chars in one second, while the same kit's HTML protocol
     // page needed a remote browser for 10k chars. So the PDF is both the
     // reachable copy and the better one.
-    fetchability: "none",
+    fetchability: "full",
+    publisherFetch: "full",
     ungated: /^https?:\/\/(?:www\.)?neb\.com\/.+\.pdf(?:$|\?)/i,
     searchSite: "neb.com",
-    searchUrl: (q) => `https://www.neb.com/en-us/search?searchValue=${enc(q)}`,
+    searchUrl: (q) => `https://www.neb.com/en-us/search#q=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?neb\.com\/en-us\/(?:products|protocols)\//i,
+    publisherResultClass: /\bCoveoResultLink\b/i,
   },
   {
     id: "bio-rad",
@@ -208,9 +242,12 @@ export const VENDORS: Vendor[] = [
     blurb: "Electrophoresis, blotting, qPCR, chromatography reagents and protocols.",
     kind: "vendor",
     // most product pages extract; some category URLs 403.
-    fetchability: "partial",
+    fetchability: "full",
+    publisherFetch: "full",
     searchSite: "bio-rad.com",
-    searchUrl: (q) => `https://www.bio-rad.com/en-us/search?text=${enc(q)}`,
+    searchUrl: (q) =>
+      `https://www.bio-rad.com/en-us/SearchResults?search_api_fulltext=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?bio-rad\.com\/en-us\/product\//i,
   },
   {
     id: "sigma-aldrich",
@@ -219,9 +256,11 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // sigmaaldrich.com answers automated requests with 403.
     fetchability: "none",
+    publisherFetch: "blocked",
     searchSite: "sigmaaldrich.com",
     searchUrl: (q) =>
       `https://www.sigmaaldrich.com/US/en/search/${enc(q)}?focus=products&type=product`,
+    publisherResult: /^https?:\/\/(?:www\.)?sigmaaldrich\.com\/US\/en\/product\//i,
   },
   {
     id: "emd-millipore",
@@ -230,9 +269,11 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // emdmillipore.com answers automated requests with 403.
     fetchability: "none",
+    publisherFetch: "blocked",
     searchSite: "emdmillipore.com",
     searchUrl: (q) =>
       `https://www.emdmillipore.com/US/en/search/-/Search?SearchTerm=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?emdmillipore\.com\/US\/en\/product\//i,
   },
   {
     id: "takarabio",
@@ -241,8 +282,11 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
+    publisherFetch: "full",
     searchSite: "takarabio.com",
-    searchUrl: (q) => `https://www.takarabio.com/search?q=${enc(q)}`,
+    searchUrl: (q) =>
+      `https://www.takarabio.com/search-results?term=${enc(q)}&tab=product`,
+    publisherResult: /^https?:\/\/(?:www\.)?takarabio\.com\/products\//i,
   },
   {
     id: "promega",
@@ -251,8 +295,11 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // product pages extract cleanly.
     fetchability: "full",
+    publisherFetch: "full",
     searchSite: "promega.com",
-    searchUrl: (q) => `https://www.promega.com/search/?q=${enc(q)}`,
+    searchUrl: (q) => `https://www.promega.com/results#q=${enc(q)}`,
+    publisherResult: /^https?:\/\/(?:www\.)?promega\.com\/products\//i,
+    interactiveSearch: { startUrl: "https://www.promega.com/" },
   },
   {
     id: "idt",
@@ -261,8 +308,12 @@ export const VENDORS: Vendor[] = [
     kind: "vendor",
     // extracts once the country-cookie redirect gate is followed.
     fetchability: "full",
+    publisherFetch: "full",
     searchSite: "idtdna.com",
-    searchUrl: (q) => `https://www.idtdna.com/site/search?searchterm=${enc(q)}`,
+    searchUrl: (q) => `https://www.idtdna.com/page/search#q=${enc(q)}`,
+    publisherResult:
+      /^https?:\/\/(?:www\.)?idtdna\.com\/page\/support-and-education\//i,
+    shadowSearch: true,
   },
 ];
 
@@ -270,6 +321,20 @@ const BY_ID = new Map(VENDORS.map((v) => [v.id, v]));
 
 export function getVendor(id: string): Vendor | undefined {
   return BY_ID.get(id);
+}
+
+/** Resolve a catalog publisher from an absolute result/page URL. */
+export function getVendorForUrl(raw: string): Vendor | undefined {
+  let host: string;
+  try {
+    host = new URL(raw).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return undefined;
+  }
+  return VENDORS.find((vendor) => {
+    const expected = vendor.searchSite.split("/")[0]!.toLowerCase().replace(/^www\./, "");
+    return host === expected;
+  });
 }
 
 /**

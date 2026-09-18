@@ -1,4 +1,4 @@
-// Optional remote-browser fallback for extraction.
+// Remote-browser publisher search and retrieval.
 //
 // Several sources this server searches serve their pages only to a real
 // browser: neb.com answers a plain request with a Cloudflare interstitial,
@@ -9,17 +9,13 @@
 // The existing browser adapters (agent/) all need a browser on the machine
 // running this server — a loopback CDP endpoint, or macOS Chrome driven by
 // Apple Events. Neither works on a headless server or in CI. Browserless is a
-// hosted Chrome reachable over HTTPS, so it is the one fallback that works with
-// no local browser and no human.
+// hosted Chrome reachable over HTTPS, so it works with no local Chrome window.
 //
-// Two things this module deliberately does NOT do:
-//
-//   - It is never the first attempt. Native retrieval runs first, is faster and
-//     free, and calls from the operator's own IP. Browserless is tried only
-//     after that has already failed.
-//   - It is never used for entitled retrieval. Entitlement is decided by IP, so
-//     a request routed through a datacenter would be a different network than
-//     the one the entitlement verdict describes. See extract.ts.
+// It is the primary route for catalog publisher search and publisher-page
+// retrieval. Direct HTTP and external indexes remain fallbacks. It is never
+// used for entitled retrieval: entitlement is decided by IP, so a request
+// routed through a datacenter would be a different network than the one the
+// entitlement verdict describes. See extract.ts.
 //
 // Which build answers matters, because the two do not serve the same routes.
 // Our own fork (github.com/mengbingrock/browserless, which adds the residential
@@ -37,6 +33,7 @@
 // Re-measure before treating either line as current.
 
 import type { ResidentialSelector } from "./residential.ts";
+import { decodeEntities, stripTags } from "./providers/types.ts";
 
 /**
  * Our own deployment, running the fork. Deliberately not a hosted
@@ -48,11 +45,32 @@ const DEFAULT_ENDPOINT = "https://browserless.truegrit.dev";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_HTML_BYTES = 8 * 1024 * 1024;
+const RESIDENTIAL_RETRY_DELAY_MS = 1_500;
 
 export interface BrowserlessConfig {
   endpoint: string;
   token: string;
   timeoutMs: number;
+}
+
+export interface BrowserlessSearchLink {
+  href: string;
+  text: string;
+  snippet: string;
+  className?: string;
+}
+
+export interface BrowserlessSearchPage {
+  title: string;
+  url: string;
+  bodyText: string;
+  links: BrowserlessSearchLink[];
+}
+
+export interface BrowserlessSearchInteraction {
+  startUrl: string;
+  inputSelector?: string;
+  submitSelector?: string;
 }
 
 /**
@@ -166,6 +184,7 @@ export async function renderWithBrowserless(
   // has no such route.
   const hosted = endpointFlavor(endpoint) === "hosted";
   const params = new URLSearchParams({ token: cfg.token });
+  if (!hosted) params.set("timeout", String(MAX_TIMEOUT_MS));
   if (residential && !hosted) {
     params.set("residentialProxy", "true");
     params.set("residentialProxyCountry", residential.country);
@@ -173,33 +192,249 @@ export async function renderWithBrowserless(
     if (residential.city) params.set("residentialProxyCity", residential.city);
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-  try {
-    const res = await doFetch(
-      `${endpoint.origin}${hosted ? "/unblock" : "/content"}?${params.toString()}`,
-      {
+  const route = `${endpoint.origin}${hosted ? "/unblock" : "/content"}?${params.toString()}`;
+  const body = JSON.stringify(
+    hosted
+      ? { url, content: true, browserWSEndpoint: false, cookies: false, screenshot: false }
+      : {
+          url,
+          gotoOptions: { waitUntil: "domcontentloaded", timeout: MAX_TIMEOUT_MS },
+          waitForTimeout: DEFAULT_TIMEOUT_MS,
+          solveCaptchas: true,
+        },
+  );
+
+  // A residential render can fail on the server for reasons that clear within
+  // a second: the self-hosted build launches a fresh browser per request and
+  // tears the previous one down afterwards, and a render that lands during
+  // that teardown is refused as ERR_TUNNEL_CONNECTION_FAILED before it ever
+  // reaches the target. One retry after a short pause covers it; a datacenter
+  // or hosted render has no such window and is not retried.
+  const attempts = residential && !hosted ? 2 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    // A self-hosted render deliberately waits 30 seconds after navigation, so
+    // its client deadline must include that settle window plus navigation.
+    const requestTimeout = hosted ? cfg.timeoutMs : Math.max(cfg.timeoutMs, 90_000);
+    const timer = setTimeout(() => controller.abort(), requestTimeout);
+    try {
+      const res = await doFetch(route, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          hosted
-            ? { url, content: true, browserWSEndpoint: false, cookies: false, screenshot: false }
-            : { url },
-        ),
+        body,
         signal: controller.signal,
-      },
-    );
-    if (!res.ok) return null;
-    const raw = await res.text();
-    if (raw.length > MAX_HTML_BYTES) return null;
-    // `/content` returns the HTML itself; `/unblock` wraps it in JSON.
-    if (!hosted) return raw.trim() ? raw : null;
-    const content = (JSON.parse(raw) as { content?: unknown }).content;
-    return typeof content === "string" && content.trim() ? content : null;
-  } catch {
-    // Includes the abort above, a malformed JSON body, and any transport error.
-    return null;
-  } finally {
-    clearTimeout(timer);
+      });
+      if (!res.ok) {
+        if (attempt < attempts) {
+          await new Promise((r) => setTimeout(r, RESIDENTIAL_RETRY_DELAY_MS));
+          continue;
+        }
+        return null;
+      }
+      const raw = await res.text();
+      if (raw.length > MAX_HTML_BYTES) return null;
+      // `/content` returns the HTML itself; `/unblock` wraps it in JSON.
+      if (!hosted) return raw.trim() ? raw : null;
+      const content = (JSON.parse(raw) as { content?: unknown }).content;
+      return typeof content === "string" && content.trim() ? content : null;
+    } catch {
+      // Includes the abort above, a malformed JSON body, and any transport error.
+      if (attempt < attempts) {
+        await new Promise((r) => setTimeout(r, RESIDENTIAL_RETRY_DELAY_MS));
+        continue;
+      }
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return null;
+}
+
+// Kept server-side so search can see links populated by JavaScript and links
+// inside open shadow roots (IDT), without opening Chrome on the caller's Mac.
+const SEARCH_FUNCTION = String.raw`
+export default async function ({ page, context }) {
+  // Commerce/search pages often keep analytics and chat connections alive, so
+  // networkidle2 may never fire. DOMContentLoaded plus the explicit 30-second
+  // settle below is deterministic and was the successful live-test shape.
+  await page.goto(context.entryUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  if (context.interactive) {
+    let input = context.inputSelector ? await page.$(context.inputSelector) : null;
+    if (!input) {
+      const inputs = await page.$$('input');
+      for (const candidate of inputs) {
+        const meta = await candidate.evaluate((el) => ({
+          placeholder: el.getAttribute('placeholder') || '',
+          name: el.getAttribute('name') || '',
+          aria: el.getAttribute('aria-label') || '',
+          type: el.getAttribute('type') || '',
+          visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
+        }));
+        const label = (meta.placeholder + ' ' + meta.name + ' ' + meta.aria).toLowerCase();
+        if (meta.visible && meta.type !== 'hidden' && /search|keyword|query|term/.test(label) && !/cookie|vendor/.test(label)) {
+          input = candidate;
+          break;
+        }
+      }
+    }
+    if (!input) throw new Error('publisher search input not found');
+    await input.click({ clickCount: 3 });
+    await input.type(context.query, { delay: 25 });
+    const submit = context.submitSelector ? await page.$(context.submitSelector) : null;
+    if (submit) await submit.click(); else await input.press('Enter');
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, context.waitMs));
+  const data = await page.evaluate((shadowDom) => {
+    const links = [];
+    const roots = new Set();
+    function visit(root) {
+      if (!root || roots.has(root)) return;
+      roots.add(root);
+      for (const anchor of root.querySelectorAll('a[href]')) {
+        if (links.length >= 2500) break;
+        const text = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+        const className = typeof anchor.className === 'string' ? anchor.className : '';
+        links.push({ href: anchor.href, text, snippet: '', className });
+      }
+      if (shadowDom) {
+        for (const element of root.querySelectorAll('*')) if (element.shadowRoot) visit(element.shadowRoot);
+      }
+    }
+    visit(document);
+    return {
+      title: document.title,
+      url: location.href,
+      bodyText: (document.body?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30000),
+      links: links.slice(0, 2500),
+    };
+  }, context.shadowDom);
+  return { data, type: 'application/json' };
+}`;
+
+function searchPageFromHtml(html: string, requestedUrl: string): BrowserlessSearchPage {
+  const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const withoutNoise = html.replace(/<(?:script|style|noscript)\b[^>]*>[\s\S]*?<\/(?:script|style|noscript)>/gi, " ");
+  const bodyText = decodeEntities(stripTags(withoutNoise)).replace(/\s+/g, " ").trim().slice(0, 30_000);
+  const links: BrowserlessSearchLink[] = [];
+  const anchor = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = anchor.exec(html)) && links.length < 2_500) {
+    const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(match[1]!);
+    const href = decodeEntities(hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "").trim();
+    if (!href) continue;
+    let absolute: string;
+    try {
+      absolute = new URL(href, requestedUrl).toString();
+    } catch {
+      continue;
+    }
+    const text = decodeEntities(stripTags(match[2]!)).replace(/\s+/g, " ").trim();
+    const classMatch = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(match[1]!);
+    const className = decodeEntities(classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "");
+    links.push({ href: absolute, text, snippet: "", ...(className ? { className } : {}) });
+  }
+  return {
+    title: decodeEntities(stripTags(titleMatch?.[1] ?? "")).trim(),
+    url: requestedUrl,
+    bodyText,
+    links,
+  };
+}
+
+/** Render a publisher search UI and return its populated links. */
+export async function searchWithBrowserless(
+  searchUrl: string,
+  query: string,
+  doFetch: typeof fetch,
+  cfg: BrowserlessConfig,
+  interaction?: BrowserlessSearchInteraction,
+  shadowDom = false,
+  residential?: ResidentialSelector | null,
+): Promise<BrowserlessSearchPage | null> {
+  let endpoint: URL;
+  try {
+    endpoint = assertBrowserlessEndpoint(cfg.endpoint);
+  } catch {
+    return null;
+  }
+  // Hosted browserless.io is not the deployment tested for publisher search;
+  // let the normal database fallback handle that configuration.
+  if (endpointFlavor(endpoint) !== "self-hosted") return null;
+
+  // The measured successful route for ordinary publisher pages is /content.
+  // /function is needed only to submit an interactive form or traverse Shadow
+  // DOM; using it everywhere is slower and some commerce pages keep enough
+  // background activity to exhaust the function protocol timeout.
+  if (!interaction && !shadowDom) {
+    const html = await renderWithBrowserless(searchUrl, doFetch, cfg, residential);
+    return html ? searchPageFromHtml(html, searchUrl) : null;
+  }
+
+  const params = new URLSearchParams({ token: cfg.token, timeout: String(MAX_TIMEOUT_MS) });
+  if (residential) {
+    params.set("residentialProxy", "true");
+    params.set("residentialProxyCountry", residential.country);
+    if (residential.region) params.set("residentialProxyRegion", residential.region);
+    if (residential.city) params.set("residentialProxyCity", residential.city);
+  }
+  const context = {
+    entryUrl: interaction?.startUrl ?? searchUrl,
+    query,
+    waitMs: DEFAULT_TIMEOUT_MS,
+    interactive: Boolean(interaction),
+    shadowDom,
+    ...(interaction?.inputSelector ? { inputSelector: interaction.inputSelector } : {}),
+    ...(interaction?.submitSelector ? { submitSelector: interaction.submitSelector } : {}),
+  };
+  const attempts = residential ? 2 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MAX_TIMEOUT_MS);
+    try {
+      const response = await doFetch(`${endpoint.origin}/function?${params.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: SEARCH_FUNCTION, context }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        if (attempt < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, RESIDENTIAL_RETRY_DELAY_MS));
+          continue;
+        }
+        return null;
+      }
+      const raw = await response.text();
+      if (!raw.trim() || raw.length > MAX_HTML_BYTES) return null;
+      const parsed = JSON.parse(raw) as { data?: Partial<BrowserlessSearchPage> };
+      const data = parsed.data;
+      if (!data || !Array.isArray(data.links)) return null;
+      return {
+        title: typeof data.title === "string" ? data.title : "",
+        url: typeof data.url === "string" ? data.url : searchUrl,
+        bodyText: typeof data.bodyText === "string" ? data.bodyText : "",
+        links: data.links.filter(
+          (link): link is BrowserlessSearchLink =>
+            Boolean(link) &&
+            typeof link.href === "string" &&
+            typeof link.text === "string" &&
+            typeof link.snippet === "string" &&
+            (link.className === undefined || typeof link.className === "string"),
+        ),
+      };
+    } catch {
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, RESIDENTIAL_RETRY_DELAY_MS));
+        continue;
+      }
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
 }

@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   activeResidentialSelector,
+  awaitResidentialReady,
+  catalogAllowHosts,
+  residentialAllows,
   residentialConfig,
+  residentialSelectorFor,
   startResidentialAgent,
 } from "../src/residential.ts";
 import { endpointFlavor, renderWithBrowserless } from "../src/browserless.ts";
@@ -58,7 +62,10 @@ describe("residentialConfig", () => {
   it("defaults connection limits and host allowlist for a personal machine", () => {
     const cfg = residentialConfig(validEnv())!;
     expect(cfg.maxConnections).toBe(8);
-    expect(cfg.allowHosts).toEqual(["*"]);
+    // The catalog, not `*`: see catalogAllowHosts for the measured reason.
+    expect(cfg.allowHosts).toContain("*.neb.com");
+    expect(cfg.allowHosts).toContain("*.sigmaaldrich.com");
+    expect(cfg.allowHosts).not.toContain("*");
     expect(cfg.id).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
   });
 
@@ -187,5 +194,99 @@ describe("browserless residential routing", () => {
     expect(endpointFlavor(new URL("https://browserless.io.example.com/x"))).toBe("self-hosted");
     expect(endpointFlavor(new URL("https://browserless.truegrit.dev/x"))).toBe("self-hosted");
     expect(endpointFlavor(new URL("https://production-sfo.browserless.io/x"))).toBe("hosted");
+  });
+});
+
+describe("allowlist and routing", () => {
+  it("derives the default allowlist from the catalog, as wildcard hosts", () => {
+    const hosts = catalogAllowHosts();
+    expect(hosts).toContain("*.neb.com");
+    expect(hosts).toContain("*.emdmillipore.com");
+    expect(hosts).toContain("*.cell.com"); // from cell.com/star-protocols: path stripped
+    expect(hosts.every((h) => h.startsWith("*."))).toBe(true);
+    expect(hosts).not.toContain("*");
+  });
+
+  it("honours an explicit allowlist, `*` included", () => {
+    expect(residentialConfig({ ...validEnv(), RESIDENTIAL_PROXY_ALLOW_HOSTS: "*" })?.allowHosts).toEqual(["*"]);
+  });
+
+  it("routes only allowed hosts residentially; everything else stays datacenter", () => {
+    // Points at a dead port so the agent never connects; the allowlist check
+    // is independent of connection state and must still answer.
+    const handle = startResidentialAgent(() => {}, {
+      ...validEnv(),
+      RESIDENTIAL_PROXY_URL: "http://127.0.0.1:9",
+    })!;
+    try {
+      expect(residentialAllows("https://www.neb.com/protocols/x")).toBe(true);
+      expect(residentialAllows("https://neb.com/x")).toBe(true);
+      // An open-access repository URL from the fulltext tiers: not in the catalog.
+      expect(residentialAllows("https://europepmc.org/articles/PMC1")).toBe(false);
+      expect(residentialAllows("not a url")).toBe(false);
+      // Not connected yet, so no selector even for an allowed host.
+      expect(residentialSelectorFor("https://www.neb.com/protocols/x")).toBeNull();
+    } finally {
+      handle.stop();
+    }
+  });
+
+  it("does not wait for readiness when no exit is configured", async () => {
+    const started = Date.now();
+    expect(await awaitResidentialReady(5_000)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  it("gives up waiting at the deadline when the exit never connects", async () => {
+    const handle = startResidentialAgent(() => {}, {
+      ...validEnv(),
+      RESIDENTIAL_PROXY_URL: "http://127.0.0.1:9",
+    })!;
+    try {
+      const started = Date.now();
+      expect(await awaitResidentialReady(300)).toBe(false);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+      expect(Date.now() - started).toBeLessThan(1_500);
+    } finally {
+      handle.stop();
+    }
+  });
+});
+
+describe("residential render retry", () => {
+  const cfg = { endpoint: "https://b.example.com", token: "tok", timeoutMs: 5_000 };
+  const html = `<html><body><article>${"Buffer at 37 °C. ".repeat(30)}</article></body></html>`;
+
+  it("retries a residential render once when the server refuses it", async () => {
+    let calls = 0;
+    const flaky = (async () => {
+      calls++;
+      return calls === 1
+        ? new Response("net::ERR_TUNNEL_CONNECTION_FAILED", { status: 500 })
+        : new Response(html, { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await renderWithBrowserless("https://www.neb.com/x", flaky, cfg, { country: "US" });
+    expect(calls).toBe(2);
+    expect(out).toContain("Buffer at 37");
+  });
+
+  it("does not retry a datacenter render, which has no teardown window", async () => {
+    let calls = 0;
+    const failing = (async () => {
+      calls++;
+      return new Response("", { status: 500 });
+    }) as unknown as typeof fetch;
+    expect(await renderWithBrowserless("https://www.neb.com/x", failing, cfg)).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  it("stops after the single retry", async () => {
+    let calls = 0;
+    const failing = (async () => {
+      calls++;
+      return new Response("", { status: 500 });
+    }) as unknown as typeof fetch;
+    expect(await renderWithBrowserless("https://www.neb.com/x", failing, cfg, { country: "US" })).toBeNull();
+    expect(calls).toBe(2);
   });
 });

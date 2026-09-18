@@ -14,7 +14,8 @@ import { type ProviderOptions, decodeEntities, stripTags, userAgent } from "./pr
 import { CookieJar, defaultUrlValidator, fetchFollowingWithCookies } from "./cookies.ts";
 import { type Entitlement, classifyEntitlement } from "./entitlement.ts";
 import { browserlessConfig, looksLikeSoftNotFound, renderWithBrowserless } from "./browserless.ts";
-import { activeResidentialSelector } from "./residential.ts";
+import { awaitResidentialReady, residentialSelectorFor } from "./residential.ts";
+import { getVendorForUrl } from "./vendors.ts";
 
 export type ExtractFormat = "html" | "xml" | "pdf" | "json";
 
@@ -299,10 +300,16 @@ function suitableForBrowser(url: string): boolean {
   return !/\.(?:pdf|json|xml)(?:$|\?)/i.test(url);
 }
 
+/** How long the first render will wait for a configured residential exit. */
+function residentialReadyTimeoutMs(): number {
+  const configured = Number(process.env.RESIDENTIAL_PROXY_READY_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured >= 0 ? Math.min(configured, 30_000) : 4_000;
+}
+
 /**
- * Second attempt through a remote browser, for pages that serve content only to
- * a real one. Returns null unless it produced something better than the direct
- * attempt already had, which was nothing.
+ * Retrieve through the remote browser. The server's datacenter route is always
+ * tried first; only a failed or challenged render is retried through a
+ * registered local residential exit.
  */
 async function extractViaBrowser(
   url: string,
@@ -320,48 +327,49 @@ async function extractViaBrowser(
     return null;
   }
 
-  // When this machine is registered as a residential exit, the render leaves
-  // from here rather than from the server's datacenter — which is both less
-  // likely to hit a bot wall and closer to the network the user is actually on.
-  const html = await renderWithBrowserless(
-    url,
-    opts.fetchImpl ?? fetch,
-    cfg,
-    activeResidentialSelector(),
-  );
-  if (!html) return null;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const accept = (html: string | null): Extracted | null => {
+    if (!html) return null;
+    const text = htmlToText(html);
+    // Browserless routes do not preserve a useful origin status in every mode,
+    // so a soft 404 and a challenge must be rejected from their rendered body.
+    if (!text || looksLikeBotWall(text) || looksLikeSoftNotFound(text)) return null;
+    return { text: cap(text, maxChars), format: "html", via: "browserless" };
+  };
 
-  const text = htmlToText(html);
-  // `/unblock` reports no HTTP status, so a soft 404 and a real page are
-  // indistinguishable by transport alone — both checks below are load-bearing
-  // here in a way they are not on the direct path, which still has `res.status`.
-  if (!text || looksLikeBotWall(text) || looksLikeSoftNotFound(text)) return null;
-  return { text: cap(text, maxChars), format: "html", via: "browserless" };
+  const datacenter = accept(await renderWithBrowserless(url, doFetch, cfg));
+  if (datacenter) return datacenter;
+
+  await awaitResidentialReady(residentialReadyTimeoutMs());
+  const selector = residentialSelectorFor(url);
+  if (!selector) return null;
+  return accept(await renderWithBrowserless(url, doFetch, cfg, selector));
 }
 
 /**
- * Retrieve and extract `url`, falling back to a remote browser when an ordinary
- * request cannot get the content.
- *
- * Order matters: the direct attempt is faster, free, and made from the
- * operator's own address, so it always runs first. The fallback is reached only
- * once that has returned nothing, and is a no-op unless BROWSERLESS_TOKEN is
- * set.
+ * Catalog publisher pages use AWS Browserless first, matching the search path
+ * that discovered them. Arbitrary repository/PDF/XML locations retain the
+ * cheaper direct-first order. Either route falls through when it fails.
  */
 export async function extractOaContent(
   url: string,
   opts: ProviderOptions,
   maxChars: number,
 ): Promise<Extracted | null> {
+  const publisherPage = Boolean(getVendorForUrl(url) && suitableForBrowser(url));
+  if (publisherPage) {
+    const rendered = await extractViaBrowser(url, opts, maxChars);
+    if (rendered) return rendered;
+  }
   const direct = await extractDirect(url, opts, maxChars);
   if (direct) return direct;
-  return extractViaBrowser(url, opts, maxChars);
+  return publisherPage ? null : extractViaBrowser(url, opts, maxChars);
 }
 
 // Phrases that only ever appear on a challenge/interstitial page, never in an
 // article. Kept narrow on purpose: a false positive silently hides real content.
 const BOT_WALL_RE =
-  /checking your browser before accessing|just a moment(?:\.\.\.)?|performing security verification|verify (?:you are|that you are) human|enable javascript and cookies to continue|verifying you are (a )?human|request unsuccessful\.\s*incapsula|attention required!\s*\|\s*cloudflare|not automatically redirected after \d+ seconds|please (enable|turn on) (javascript|cookies) to (continue|proceed)/i;
+  /checking your browser before accessing|just a moment(?:\.\.\.)?|performing security verification|(?:verify|confirm) (?:you are|that you are) human|human verification|safeline waf|enable javascript and cookies to continue|verifying you are (a )?human|request unsuccessful\.\s*incapsula|attention required!\s*\|\s*cloudflare|not automatically redirected after \d+ seconds|please (enable|turn on) (javascript|cookies) to (continue|proceed)/i;
 
 // `citation_pdf_url` is the Google Scholar indexing convention and is emitted by
 // most publishers (Nature, Elsevier, Wiley, Springer). Attribute order varies, so

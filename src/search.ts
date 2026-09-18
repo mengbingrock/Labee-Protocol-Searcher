@@ -1,11 +1,9 @@
 // Orchestrates a protocol search across sources.
 //
-//   - Journal sources (STAR Protocols, Nature Protocols) go to scholarly APIs
-//     (Crossref → Europe PMC): reliable, keyless, no rate limits.
-//   - Vendor sources go to the active web-search provider chain (Brave, then
-//     Google — both keyed), batched into combined `(site:a OR site:b ...)`
-//     queries with results bucketed back per vendor. With no key set there is
-//     no vendor search, and the outcome says so.
+//   - Every source first uses its own rendered publisher search page through
+//     the configured AWS Browserless deployment.
+//   - A journal publisher miss falls back to scholarly APIs.
+//   - A reagent/vendor publisher miss falls back to the keyed web-search chain.
 //
 // Every source is also paired with its deterministic on-site search URL, so the
 // tool stays useful even when a backend is unavailable.
@@ -16,6 +14,7 @@ import { searchJournal } from "./journals.ts";
 import { resolveVendors, getVendor, type Fetchability, type Vendor } from "./vendors.ts";
 import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
 import { assessDoiAvailability, type DoiAvailabilityEvidence } from "./availability.ts";
+import { searchPublisher } from "./publisher-search.ts";
 
 export interface VendorResults {
   id: string;
@@ -123,10 +122,8 @@ export async function searchProtocols(
     return { query: "", vendors: [], unknownVendors: unknown, partial: false };
   }
   const limit = Math.max(1, Math.min(10, Math.floor(opts.limit ?? 5)));
-  // One query per vendor. Batching several into `(site:a OR site:b) q` shares a
-  // single result budget, so a large domain crowds the others out and they come
-  // back empty even when they do have matching pages. Costs one search-provider
-  // call per vendor — raise `batchSize` to trade recall back for quota.
+  // Batching applies only to the web-search fallback. First-party publisher
+  // searches are always isolated so one source cannot crowd out another.
   const batchSize = Math.max(1, opts.batchSize ?? 1);
   const concurrency = Math.max(1, opts.concurrency ?? 4);
   const providerOpts = opts.providerOpts ?? {};
@@ -139,12 +136,34 @@ export async function searchProtocols(
   );
   let partial = false;
 
-  // --- Journals: scholarly APIs, run concurrently (they don't rate-limit). ---
-  const journals = vendors.filter((v) => v.kind === "journal");
+  // --- Primary: each publisher's own rendered search page. ---
+  const needsFallback = new Set<string>();
+  await mapPool(vendors, Math.min(concurrency, 2), async (vendor) => {
+    const bucket = buckets.get(vendor.id)!;
+    const outcome = await searchPublisher(vendor, trimmed, limit, providerOpts);
+    bucket.providers = [
+      {
+        id: "publisher-browserless",
+        status: outcome.status,
+        count: outcome.results.length,
+        elapsedMs: outcome.elapsedMs,
+        ...(outcome.error ? { error: outcome.error } : {}),
+      },
+    ];
+    if (outcome.results.length > 0) {
+      bucket.results = outcome.results;
+      if (outcome.source) bucket.source = outcome.source;
+    } else {
+      needsFallback.add(vendor.id);
+    }
+  });
+
+  // --- Journal fallback: scholarly APIs. ---
+  const journals = vendors.filter((v) => v.kind === "journal" && needsFallback.has(v.id));
   await mapPool(journals, concurrency, async (v) => {
     const bucket = buckets.get(v.id)!;
     const outcome = await searchJournal(v.journal!, trimmed, limit, providerOpts);
-    bucket.providers = outcome.providers;
+    bucket.providers = [...(bucket.providers ?? []), ...outcome.providers];
     if (outcome.results.length > 0) {
       bucket.results = outcome.results;
       bucket.source = outcome.source;
@@ -158,13 +177,16 @@ export async function searchProtocols(
     }
   });
 
-  // --- Vendors: combined web-search queries, bucketed by hostname. ---
-  const webVendors = vendors.filter((v) => v.kind === "vendor");
+  // --- Vendor fallback: site-scoped web search, bucketed by hostname. ---
+  const webVendors = vendors.filter((v) => v.kind === "vendor" && needsFallback.has(v.id));
   await mapPool(chunk(webVendors, batchSize), concurrency, async (group) => {
     const sites = group.map((v) => `site:${v.searchSite}`).join(" OR ");
     const combined = group.length === 1 ? `${sites} ${trimmed}` : `(${sites}) ${trimmed}`;
     const outcome = await webSearch(combined, limit * group.length, providerOpts);
-    for (const v of group) buckets.get(v.id)!.providers = outcome.providers;
+    for (const v of group) {
+      const bucket = buckets.get(v.id)!;
+      bucket.providers = [...(bucket.providers ?? []), ...outcome.providers];
+    }
     if (outcome.results.length === 0) {
       partial = true;
       const reason = outcome.error ?? "no results";
@@ -233,7 +255,7 @@ export function renderMarkdown(resp: SearchResponse): string {
   lines.push(
     `_${totalHits} result${totalHits === 1 ? "" : "s"} across ${resp.vendors.length} source${
       resp.vendors.length === 1 ? "" : "s"
-    }. Search pages always work even when extraction is blocked.${note}_`,
+    }. Publisher search is primary; configured scholarly/web providers are fallback.${note}_`,
   );
   return lines.join("\n");
 }
@@ -359,9 +381,11 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
     // an echo that adds quotes the real query never had reads as an exact-phrase
     // search and invites "loosen the quoting" fixes for a non-existent problem.
     const effectiveQuery = vendor
-      ? kind === "journal"
-        ? `${trimmed} in ${b.name}`
-        : `site:${vendor.searchSite} ${trimmed}`
+      ? b.source?.startsWith("publisher-browserless")
+        ? `${trimmed} on ${vendor.searchSite}`
+        : kind === "journal"
+          ? `${trimmed} in ${b.name}`
+          : `site:${vendor.searchSite} ${trimmed}`
       : undefined;
     // Collect first, then drop same-id repeats within the source: normalising
     // DOI variants (see idForArticleUrl) can collapse two hits onto one id, and
@@ -377,10 +401,16 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
       if (kind === "journal") {
         const article = idForArticleUrl(r.url);
         id = article.id;
-        // A journal hit with no DOI/PMID/PMCID is a bare publisher URL, and
-        // those are exactly the paywalled pages the scholarly APIs exist to
-        // route around — never claim it's retrievable.
-        fetchable = article.resolvable ? grade : "none";
+        // First-party journal search commonly returns a publisher URL rather
+        // than doi.org. Grade that URL from the measured Browserless outcome;
+        // scholarly fallback results still retain the journal-level prior.
+        fetchable = article.resolvable
+          ? grade
+          : vendor?.publisherFetch === "full"
+            ? "full"
+            : vendor?.publisherFetch === "abstract-only"
+              ? "partial"
+              : "none";
       } else {
         id = `url:${r.url}`;
         // A vendor's grade describes its HTML; some serve documents openly

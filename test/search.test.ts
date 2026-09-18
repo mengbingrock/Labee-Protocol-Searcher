@@ -23,6 +23,64 @@ describe("searchProtocols", () => {
     process.env = { ...env };
   });
 
+  it("uses a publisher's own Browserless results before database/web fallbacks", async () => {
+    process.env.BROWSERLESS_TOKEN = "t";
+    process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";
+    process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
+    process.env.BRAVE_API_KEY = "k";
+    const seen: string[] = [];
+    const fakeFetch = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/content?")) {
+        return new Response(`
+          <html><head><title>Search Box | NEB</title></head><body>
+          <a href="https://www.neb.com/en-us/about">About</a>
+          <a class="CoveoResultLink" href="https://www.neb.com/en-us/products/e7435-kit">Promotion</a>
+          <a class="CoveoResultLink" href="https://www.neb.com/en-us/products/e7435-kit">NEBNext PCR-free kit</a>
+          </body></html>`, { status: 200 });
+      }
+      throw new Error(`fallback should not run: ${url}`);
+    }) as unknown as typeof fetch;
+    const resp = await searchProtocols("pcr", {
+      vendors: ["neb"],
+      providerOpts: { fetchImpl: fakeFetch },
+    });
+    expect(resp.vendors[0]).toMatchObject({
+      source: "publisher-browserless",
+      results: [{ title: "NEBNext PCR-free kit" }],
+    });
+    expect(seen[0]).toContain("/content?");
+    expect(seen.some((url) => url.includes("api.search.brave.com"))).toBe(false);
+  });
+
+  it("uses the database/web provider only after the publisher page has no credible results", async () => {
+    process.env.BROWSERLESS_TOKEN = "t";
+    process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";
+    process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
+    process.env.BRAVE_API_KEY = "k";
+    const seen: string[] = [];
+    const fakeFetch = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/content?")) {
+        return new Response(
+          `<html><head><title>Advanced Search</title></head><body><a href="/US/en/about">About</a></body></html>`,
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({
+        web: { results: [{ title: "PCR product", url: "https://www.sigmaaldrich.com/US/en/product/x", description: "fallback" }] },
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const resp = await searchProtocols("pcr", {
+      vendors: ["sigma-aldrich"],
+      providerOpts: { fetchImpl: fakeFetch },
+    });
+    expect(resp.vendors[0]!.source).toBe("brave");
+    expect(resp.vendors[0]!.results[0]!.title).toBe("PCR product");
+    expect(seen[0]).toContain("/content?");
+    expect(seen.some((url) => url.includes("api.search.brave.com"))).toBe(true);
+  });
+
   it("buckets combined web results back to the right vendor by URL", async () => {
     process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
     process.env.BRAVE_API_KEY = "k";
@@ -82,7 +140,7 @@ describe("searchProtocols", () => {
     expect(resp.partial).toBe(true);
     expect(resp.vendors[0]!.results).toEqual([]);
     expect(resp.vendors[0]!.searchUrl).toBe(
-      "https://www.neb.com/en-us/search?searchValue=gibson",
+      "https://www.neb.com/en-us/search#q=gibson",
     );
     expect(renderMarkdown(resp)).toMatch(/BRAVE_API_KEY|search pages/);
   });
@@ -152,11 +210,11 @@ describe("result fetchability", () => {
     const out = await search("pcr", { sources: ["neb", "takarabio"], providerOpts: { fetchImpl: f } });
     const neb = out.results.find((r) => r.source === "neb")!;
     const takara = out.results.find((r) => r.source === "takarabio")!;
-    expect(neb.fetchable).toBe("none"); // neb.com 403s
+    expect(neb.fetchable).toBe("full"); // recovered through AWS Browserless
     expect(takara.fetchable).toBe("full"); // takarabio.com extracts fine
   });
 
-  it("marks a journal hit with no resolvable identifier as links-only", async () => {
+  it("grades a bare publisher journal URL from its measured Browserless fetch", async () => {
     process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
     // A bare publisher URL — no DOI, PMID or PMCID for `fetch` to resolve.
     const body = JSON.stringify({
@@ -165,7 +223,7 @@ describe("result fetchability", () => {
     const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
     const out = await search("x", { sources: ["star-protocols"], providerOpts: { fetchImpl: f } });
     expect(out.results[0]!.id).toMatch(/^url:/);
-    expect(out.results[0]!.fetchable).toBe("none");
+    expect(out.results[0]!.fetchable).toBe("full");
   });
 
   it("promotes a DOI to fetchable on live open-access signals from the backends", async () => {
@@ -227,11 +285,9 @@ describe("result fetchability", () => {
   });
 });
 
-// A vendor's grade describes its HTML. NEB's Cloudflare challenge gates every
-// page, but its PDF manuals under /-/media/ are served to a plain request
-// (measured 2026-09-17). Those results must be graded on what they are, not on
-// what the site usually does — and listed first, so the agent's first `fetch`
-// is the one that works.
+// NEB HTML is now recovered through AWS Browserless, while PDF manuals under
+// /-/media/ are still cheaper direct fetches. Manuals stay first when a fallback
+// web search returns both forms.
 describe("ungated vendor documents", () => {
   const env = { ...process.env };
   afterEach(() => {
@@ -263,8 +319,8 @@ describe("ungated vendor documents", () => {
     const neb = out.results.filter((r) => r.source === "neb");
     expect(neb.map((r) => r.title)).toEqual(["Manual E0554", "Q5 SDM Kit", "Q5 SDM Protocol"]);
     expect(neb[0]!.fetchable).toBe("full");
-    expect(neb[1]!.fetchable).toBe("none");
-    expect(neb[2]!.fetchable).toBe("none");
+    expect(neb[1]!.fetchable).toBe("full");
+    expect(neb[2]!.fetchable).toBe("full");
     // Sources without a pattern are left exactly as the provider ranked them.
     expect(out.results.find((r) => r.source === "takarabio")!.fetchable).toBe("full");
   });
@@ -282,7 +338,8 @@ describe("ungated vendor documents", () => {
     });
     const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
     const out = await search("q5", { sources: ["neb"], providerOpts: { fetchImpl: f } });
-    // The lookalike never buckets as NEB at all; the .pdf-less path stays gated.
-    expect(out.results.map((r) => [r.title, r.fetchable])).toEqual([["PDF-ish path", "none"]]);
+    // The lookalike never buckets as NEB at all; the real NEB page is
+    // Browserless-fetchable even though it is not a PDF.
+    expect(out.results.map((r) => [r.title, r.fetchable])).toEqual([["PDF-ish path", "full"]]);
   });
 });

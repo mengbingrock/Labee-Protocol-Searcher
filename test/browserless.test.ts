@@ -113,7 +113,7 @@ describe("extractOaContent — remote-browser fallback", () => {
     process.env = { ...env };
   });
 
-  it("is never the first attempt: a page that fetches directly never reaches it", async () => {
+  it("uses Browserless first for a catalog publisher page", async () => {
     process.env.BROWSERLESS_TOKEN = "t";
     const seen: string[] = [];
     const f = (async (url: string) => {
@@ -122,8 +122,8 @@ describe("extractOaContent — remote-browser fallback", () => {
     }) as unknown as typeof fetch;
 
     const out = await extractOaContent("https://www.takarabio.com/p", { fetchImpl: f }, 5_000);
-    expect(out?.via).toBeUndefined();
-    expect(seen.some((u) => /\/(content|unblock)/.test(u))).toBe(false);
+    expect(out?.via).toBe("browserless");
+    expect(seen.some((u) => /\/(content|unblock)/.test(u))).toBe(true);
   });
 
   it("recovers a page the site refuses, and marks how it was obtained", async () => {
@@ -213,8 +213,8 @@ describe("fetchWebPage labelling", () => {
     expect(out).toContain("read in a remote browser");
   });
 
-  it("still reports an ordinary retrieval as ok", async () => {
-    process.env.BROWSERLESS_TOKEN = "t";
+  it("still reports an ordinary retrieval as ok when Browserless is unavailable", async () => {
+    delete process.env.BROWSERLESS_TOKEN;
     const f = (async () =>
       new Response(PAGE, { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
     const out = await fetchResource("url:https://www.takarabio.com/p", { fetchImpl: f });

@@ -173,7 +173,7 @@ export function prepareHostBrowserSearch(
   cleanExpired();
   const normalizedLimit = Math.max(1, Math.min(10, Math.floor(limit || 5)));
   const captureId = randomUUID();
-  const searchUrl = `https://www.neb.com/en-us/search?searchValue=${encodeURIComponent(query.trim())}`;
+  const searchUrl = `https://www.neb.com/en-us/search#q=${encodeURIComponent(query.trim())}`;
   pendingSearches.set(captureId, {
     query: query.trim(),
     limit: normalizedLimit,

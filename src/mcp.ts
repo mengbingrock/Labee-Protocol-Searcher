@@ -51,9 +51,9 @@ function packageVersion(): string {
 
 const SERVER_INFO = { name: "labee-protocol-searcher", version: packageVersion() };
 const SERVER_INSTRUCTIONS =
-  "Prefer Codex's integrated Browser for browser tasks. It keeps browsing inside Codex, uses a " +
-  "separate profile, and provides a shared view; it is especially suitable for public websites, " +
-  "research, and localhost testing. For NEB searches, call search with browser=host. Open the returned " +
+  "Search uses each publisher's own page through the configured AWS Browserless deployment by default, " +
+  "then falls back to scholarly or web-search databases only when the publisher search fails. " +
+  "For an explicitly requested visible NEB browser session, call search with browser=host. Open the returned " +
   "hostBrowserTask.searchUrl in the integrated Browser, read its rendered results, open selected " +
   "NEB result pages in that same Browser profile, then call neb_search_commit with the captureId and " +
   "captured HTML or visible text. A later fetch of a committed id returns the cached capture without " +
@@ -88,10 +88,10 @@ export const TOOLS = [
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
       "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, " +
-      "reagent, product, enzyme, or recognition site. Journals (STAR Protocols, Nature Protocols, " +
-      "JoVE, Bio-protocol, Current Protocols, protocols.io) are searched via scholarly APIs " +
-      "(Crossref/Europe PMC); vendors (Thermo Fisher, QIAGEN, NEB, Bio-Rad, Sigma-Aldrich, EMD " +
-      "Millipore, Takara Bio, Promega, IDT) via web search; and restriction enzymes via REBASE (NEB's " +
+      "reagent, product, enzyme, or recognition site. Every journal/vendor is searched on its own " +
+      "publisher page through AWS Browserless first. Failed journal searches fall back to scholarly " +
+      "APIs (Crossref/Europe PMC), and failed vendor searches fall back to site-scoped web search. " +
+      "Restriction enzymes use REBASE (NEB's " +
       "open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a " +
       "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — " +
       "fresh exact DOI observations from the daily CI index win, current OA metadata is next, and " +
@@ -125,8 +125,9 @@ export const TOOLS = [
           type: "string",
           enum: ["off", "cdp", "default", "host"],
           description:
-            "Optional NEB browser route. Prefer `host`: it delegates both NEB search and result capture " +
-            "to Codex's integrated Browser via neb_search_commit. `default` uses system Chrome and must " +
+            "Optional visible NEB browser override. The omitted/default path uses AWS Browserless. " +
+            "`host` delegates NEB search and result capture to Codex's integrated Browser via " +
+            "neb_search_commit. `default` uses system Chrome and must " +
             "only be selected as an explicitly authorized fallback.",
         },
       },
@@ -309,9 +310,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         "Sources (call `search`, then `fetch` a result's id):",
         ...lines,
         "",
-        `Web-search providers (vendors): ${providers}.`,
-        `Journal providers (chain): ${journalProviderOrder().join(" → ")}.`,
-        "Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for rate-limit-free vendor search; " +
+        "Primary publisher search: AWS Browserless (when BROWSERLESS_TOKEN is configured).",
+        `Fallback web-search providers (vendors): ${providers}.`,
+        `Fallback journal providers: ${journalProviderOrder().join(" → ")}.`,
+        "Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for vendor-search fallback; " +
           "set PROTOCOLS_CONTACT_EMAIL to enable the Unpaywall open-access full-text fallback.",
       ].join("\n"),
     );

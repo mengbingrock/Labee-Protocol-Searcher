@@ -31,6 +31,16 @@ describe("vendor registry", () => {
     }
   });
 
+  it("uses the publisher routes verified by the Browserless sweep", () => {
+    expect(getVendor("star-protocols")!.searchUrl("PCR purification")).toContain("journalCode=xpro");
+    expect(getVendor("bio-protocol")!.searchUrl("PCR purification")).toContain("/en/searchlist?content=");
+    expect(getVendor("bio-rad")!.searchUrl("PCR purification")).toContain("/SearchResults?search_api_fulltext=");
+    expect(getVendor("takarabio")!.searchUrl("PCR purification")).toContain("/search-results?term=");
+    expect(getVendor("promega")!.searchUrl("PCR purification")).toContain("/results#q=");
+    expect(getVendor("idt")!.searchUrl("PCR purification")).toContain("/page/search#q=");
+    expect(getVendor("neb")!.searchUrl("PCR purification")).toContain("/search#q=");
+  });
+
   it("marks the two protocol journals as journal-kind with Crossref metadata", () => {
     for (const id of ["star-protocols", "nature-protocols"]) {
       const v = getVendor(id)!;
@@ -56,10 +66,14 @@ describe("fetchability grading", () => {
     for (const v of VENDORS) {
       expect(["full", "partial", "none"], v.id).toContain(v.fetchability);
     }
-    // Measured 403s — see the per-source notes in vendors.ts.
-    for (const id of ["neb", "sigma-aldrich", "emd-millipore"]) {
+    // Still blocked after AWS Browserless + residential retry.
+    for (const id of ["sigma-aldrich", "emd-millipore"]) {
       expect(getVendor(id)!.fetchability, id).toBe("none");
     }
+    expect(getVendor("neb")!.fetchability).toBe("full");
+    expect(getVendor("nature-protocols")!.publisherFetch).toBe("abstract-only");
+    expect(getVendor("current-protocols")!.publisherFetch).toBe("abstract-only");
+    expect(getVendor("protocols-io")!.publisherFetch).toBe("full");
   });
 
   it("does not infer fetchability from kind", () => {

@@ -153,9 +153,17 @@ async function detectNetwork(): Promise<void> {
 }
 
 if (args.query !== undefined || args.fetchId !== undefined || args.listSources) {
+  // One-shot search and fetch both use AWS Browserless and may need the local
+  // residential retry. Listing sources performs no network work.
+  const residential = args.query !== undefined || args.fetchId !== undefined
+    ? startResidentialAgent()
+    : null;
   detectNetwork()
     .then(() => runCli(args))
-    .finally(() => shutdownDefaultBrowser())
+    .finally(() => {
+      residential?.stop();
+      return shutdownDefaultBrowser();
+    })
     .catch((err) => {
       process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exit(1);
@@ -168,9 +176,10 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
       process.exit(1);
     });
 } else {
-  // stdio mode is the thin layer on the user's own PC, so this is the one mode
-  // that may offer the machine as a residential exit. `--http` deliberately
-  // does not: that process is the hosted server itself. Off unless configured.
+  // stdio mode is the thin layer on the user's own PC, so it may offer the
+  // machine as a residential exit (as may one-shot `--query`/`--fetch`, above).
+  // `--http` deliberately does not: that process is the hosted server itself.
+  // Off unless configured.
   const residential = startResidentialAgent();
   detectNetwork()
     .then(() => runMcpServer())

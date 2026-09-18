@@ -139,10 +139,12 @@ Operator-managed CDP remains available as `browser: cdp` via
 ### Optional remote browser for headless installs
 
 Every mode above needs a browser on the machine running Labee, so none of them
-help a headless server or CI. Setting `BROWSERLESS_TOKEN` enables a remote
-browser instead, used as a **fallback inside extraction**: an ordinary request
-is always made first, and the remote browser is tried only once that has
-returned nothing. What it recovers has changed over time, so the measurements
+help a headless server or CI. Setting `BROWSERLESS_TOKEN` enables the remote
+browser used as the **primary publisher search and publisher-page fetch
+route**. It renders each publisher's own search page first; scholarly or
+site-scoped web databases run only when that publisher search fails. Publisher
+result pages also use Browserless first, with ordinary HTTP as fallback. What
+it recovers has changed over time, so the measurements
 are dated. On 2026-08-28 the hosted browserless.io `/unblock` endpoint
 retrieved all three sources graded `links-only`; by 2026-09-17 it retrieved
 only `neb.com` (about 7 seconds), while `sigmaaldrich.com` and
@@ -151,12 +153,10 @@ residential exit — with an Akamai denial or an HTTP/2 rejection. Those two are
 still readable with the local `--browser default` mode above, which drives a
 real Chrome; the block is on the client fingerprint, not the network.
 
-NEB needs no browser at all for the copy that matters most. Its HTML sits
-behind a Cloudflare challenge, but its PDF manuals under `/-/media/` are served
-to a plain request. `search` grades those results `fetchable` and lists them
-ahead of the vendor's gated pages, and `fetch` returns them as `ok` — the
-E0554 kit manual extracts to 24k characters in about a second, more than twice
-what its HTML protocol page yields through a browser.
+NEB search is recovered through the self-hosted Browserless residential retry;
+the selected NEB product/protocol page normally fetches through the datacenter
+route. Its PDF manuals under `/-/media/` remain directly fetchable and are
+listed ahead of equivalent HTML pages when a fallback web search finds both.
 
 Two limits are deliberate. Results are labelled `display-only-full-text` rather
 than `ok`, because a page that needed a remote browser is not the same evidence
@@ -198,7 +198,7 @@ Four things to know before enabling it:
   The hosted browserless.io service has no such feature.
 - Residential calls go to `/content`; `/unblock` is hosted-only and 404s on a
   self-hosted server.
-- Only stdio mode registers. Under `--http` this process *is* the server, and a
+- Stdio mode and one-shot `--query`/`--fetch` register. Under `--http` this process *is* the server, and a
   server offering itself as a residential exit would be a datacenter IP wearing
   the wrong label.
 - Consent is a separate variable from enabling, deliberately. Other people's
