@@ -271,6 +271,22 @@ export function sourceProbeRows(declared, json) {
 }
 
 /**
+ * The grade a probe should be judged against. The catalog grade describes a
+ * vendor's HTML; a vendor may declare URL shapes it serves openly (NEB's PDF
+ * manuals), and search grades those results `full` and lists them first — so
+ * the top result, the one probed here, can legitimately carry a different
+ * grade from its source. Judging that probe against the catalog would report
+ * drift every day for a behaviour that is declared and intended.
+ *
+ * Only vendor pages are overridden. A journal result's grade may be a live
+ * open-access prediction, and drift is meant to compare the *catalog* claim
+ * with the outcome, not one prediction with another.
+ */
+export function probeGrade(catalogGrade, top) {
+  return top?.kind === "vendor-page" && top.fetchable ? top.fetchable : catalogGrade;
+}
+
+/**
  * One search across every source, then fetch every unique journal DOI plus the
  * top non-DOI result from each remaining source. The search half measures reach;
  * the fetch half feeds both source health and the exact DOI index.
@@ -285,6 +301,7 @@ async function probeSources(declared) {
   const rows = await mapLimit(sourceProbeRows(declared, json), CONCURRENCY, async (row) => {
     const top = (json.results ?? []).find((result) => result.source === row.id);
     row.probedId = top?.id ?? "";
+    row.declared = probeGrade(row.declared, top);
     if (top) {
       const doiObservation = doiById.get(top.id.toLowerCase());
       if (doiObservation) {

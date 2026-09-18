@@ -53,6 +53,16 @@ export interface Vendor {
   kind: "journal" | "vendor";
   /** Expected outcome of `fetch` on this source's results. */
   fetchability: Fetchability;
+  /**
+   * URL shapes this source serves to a plain request even though its pages in
+   * general do not. A matching result is graded `full` regardless of
+   * `fetchability`, and listed ahead of the source's other hits so the agent
+   * spends its first `fetch` on the one that will work.
+   *
+   * A grade is per site; a bot wall is per URL type. This is where the two are
+   * reconciled instead of pretending the site is uniform.
+   */
+  ungated?: RegExp;
   /** Domain (optionally `domain/path`) scoping the web `site:` query (vendors). */
   searchSite: string;
   /** Scholarly-API metadata (journals only). */
@@ -181,8 +191,14 @@ export const VENDORS: Vendor[] = [
       "For restriction-enzyme recognition/cut/methylation facts use REBASE rather than this " +
       "vendor's pages: `search` with `sources: [\"rebase\"]`, then `fetch` the `rebase:<enzyme>` id.",
     kind: "vendor",
-    // neb.com answers automated requests with 403.
+    // neb.com HTML answers automated requests with a Cloudflare challenge. Its
+    // PDF manuals under /-/media/ are not behind it: measured 2026-09-17,
+    // manuale0554.pdf returned HTTP 200 (860 KB) to a plain request and
+    // extracted to 24k chars in one second, while the same kit's HTML protocol
+    // page needed a remote browser for 10k chars. So the PDF is both the
+    // reachable copy and the better one.
     fetchability: "none",
+    ungated: /^https?:\/\/(?:www\.)?neb\.com\/.+\.pdf(?:$|\?)/i,
     searchSite: "neb.com",
     searchUrl: (q) => `https://www.neb.com/en-us/search?searchValue=${enc(q)}`,
   },

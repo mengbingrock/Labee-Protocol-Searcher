@@ -1,0 +1,205 @@
+// Optional remote-browser fallback for extraction.
+//
+// Several sources this server searches serve their pages only to a real
+// browser: neb.com answers a plain request with a Cloudflare interstitial,
+// emdmillipore.com with an Akamai "Access Denied", and sigmaaldrich.com rejects
+// the HTTP/2 fingerprint outright. Those are the sources graded `none` in
+// vendors.ts, and until now `fetch` could only hand back their link.
+//
+// The existing browser adapters (agent/) all need a browser on the machine
+// running this server — a loopback CDP endpoint, or macOS Chrome driven by
+// Apple Events. Neither works on a headless server or in CI. Browserless is a
+// hosted Chrome reachable over HTTPS, so it is the one fallback that works with
+// no local browser and no human.
+//
+// Two things this module deliberately does NOT do:
+//
+//   - It is never the first attempt. Native retrieval runs first, is faster and
+//     free, and calls from the operator's own IP. Browserless is tried only
+//     after that has already failed.
+//   - It is never used for entitled retrieval. Entitlement is decided by IP, so
+//     a request routed through a datacenter would be a different network than
+//     the one the entitlement verdict describes. See extract.ts.
+//
+// Which build answers matters, because the two do not serve the same routes.
+// Our own fork (github.com/mengbingrock/browserless, which adds the residential
+// exit this module can use) serves `/content` and has no `/unblock` at all —
+// that is a hosted-browserless.io feature. Posting to the wrong one fails
+// silently: a 404 becomes `res.ok === false` becomes null, and the caller sees
+// "no result" rather than "misconfigured". So the route is chosen from the
+// endpoint, never from whether a residential exit happens to be registered.
+//
+// Measured behaviour, and it has already drifted once:
+//   - 2026-08-28: hosted `/unblock` retrieved neb.com, sigmaaldrich.com and
+//     emdmillipore.com; plain `/content` was refused by all three.
+//   - 2026-09-17: hosted `/unblock` retrieves only neb.com. Both Merck sites
+//     now answer it with Akamai "Access Denied" from every region tried.
+// Re-measure before treating either line as current.
+
+import type { ResidentialSelector } from "./residential.ts";
+
+/**
+ * Our own deployment, running the fork. Deliberately not a hosted
+ * browserless.io region: that service is a different codebase without the
+ * residential exit, and defaulting to it would silently send traffic to a
+ * third party that this project does not control.
+ */
+const DEFAULT_ENDPOINT = "https://browserless.truegrit.dev";
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_TIMEOUT_MS = 120_000;
+const MAX_HTML_BYTES = 8 * 1024 * 1024;
+
+export interface BrowserlessConfig {
+  endpoint: string;
+  token: string;
+  timeoutMs: number;
+}
+
+/**
+ * Read the configuration, or null when the fallback is unavailable. An absent
+ * token is "not configured", never an error: the whole feature is opt-in, and
+ * an install without it must behave exactly as it did before.
+ */
+export function browserlessConfig(env: NodeJS.ProcessEnv = process.env): BrowserlessConfig | null {
+  if (env.PROTOCOLS_BROWSERLESS?.trim().toLowerCase() === "off") return null;
+  const token = env.BROWSERLESS_TOKEN?.trim();
+  if (!token) return null;
+  const endpoint = (env.BROWSERLESS_URL?.trim() || DEFAULT_ENDPOINT).replace(/\/+$/, "");
+  const configured = Number(env.BROWSERLESS_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(configured) && configured > 0
+    ? Math.min(configured, MAX_TIMEOUT_MS)
+    : DEFAULT_TIMEOUT_MS;
+  return { endpoint, token, timeoutMs };
+}
+
+/**
+ * The control endpoint must be HTTPS, or loopback for a self-hosted container.
+ * Credentials in the URL are refused: the token belongs in the query string the
+ * caller builds, not somewhere it can be logged as part of an origin.
+ */
+export function assertBrowserlessEndpoint(raw: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("browserless endpoint is not a valid URL");
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("browserless endpoint must use HTTPS unless it is loopback");
+  }
+  if (url.username || url.password) {
+    throw new Error("browserless endpoint credentials are forbidden");
+  }
+  return url;
+}
+
+/**
+ * Which codebase answers at this endpoint, and therefore which routes exist.
+ *
+ * "hosted" is browserless.io's own service: it serves `/unblock`, whose stealth
+ * patching is the only thing measured to clear neb.com's Cloudflare challenge.
+ * Everything else is treated as our fork, which serves `/content` and can route
+ * through a registered residential exit, but has no `/unblock` — verified
+ * against github.com/mengbingrock/browserless, whose HTTP routes are exactly
+ * content, download, function, json-*, pdf, performance, scrape and screenshot.
+ *
+ * Host-suffix matching, so a lookalike like `browserless.io.example.com` is
+ * treated as self-hosted rather than inheriting the hosted contract.
+ */
+export function endpointFlavor(endpoint: URL): "hosted" | "self-hosted" {
+  const host = endpoint.hostname.toLowerCase().replace(/\.$/, "");
+  return host === "browserless.io" || host.endsWith(".browserless.io")
+    ? "hosted"
+    : "self-hosted";
+}
+
+/**
+ * Pages whose rendered body is a "not found" notice rather than content.
+ *
+ * `/unblock` returns the rendered HTML and no HTTP status, so the usual
+ * `res.status !== 200` guard is unavailable — a soft 404 arrives looking
+ * exactly like a successful retrieval. Observed case: a dead neb.com protocol
+ * URL renders 4.7k characters of "We're very sorry, but we cannot find the URL
+ * that you have requested", which without this check is reported as content.
+ *
+ * Kept deliberately narrow, and applied only to the first part of the document:
+ * a protocol that discusses HTTP status codes must not be discarded.
+ */
+const SOFT_NOT_FOUND =
+  /we (?:cannot|can(?:'|’)t|could not|are unable to) find the (?:url|page|document)|page not found|404 (?:-|—|:)? ?not found|the requested page (?:could not be found|does not exist)/i;
+
+export function looksLikeSoftNotFound(text: string): boolean {
+  return SOFT_NOT_FOUND.test(text.slice(0, 1_200));
+}
+
+/**
+ * Render `url` in a remote browser and return its HTML, or null on any failure.
+ * Never throws: this is a fallback, and a fallback that can fail the call it was
+ * meant to rescue is worse than no fallback at all.
+ *
+ * `doFetch` is the caller's injected fetch, so tests drive this without a token
+ * or a network, exactly like every other network path in this codebase.
+ *
+ * `residential` asks the server to route the render back out through a
+ * registered residential exit — see residential.ts. Pass it only when one is
+ * actually registered: with no matching agent the server rejects the call, and
+ * a fallback that fails is worse than one that calls from a datacenter.
+ */
+export async function renderWithBrowserless(
+  url: string,
+  doFetch: typeof fetch,
+  cfg: BrowserlessConfig,
+  residential?: ResidentialSelector | null,
+): Promise<string | null> {
+  let endpoint: URL;
+  try {
+    endpoint = assertBrowserlessEndpoint(cfg.endpoint);
+  } catch {
+    return null;
+  }
+
+  // The route follows the endpoint, not the residential selector. Keying it on
+  // the selector meant the first fetch after startup — before registration
+  // completed — took the `/unblock` path and 404'd against our own fork, which
+  // has no such route.
+  const hosted = endpointFlavor(endpoint) === "hosted";
+  const params = new URLSearchParams({ token: cfg.token });
+  if (residential && !hosted) {
+    params.set("residentialProxy", "true");
+    params.set("residentialProxyCountry", residential.country);
+    if (residential.region) params.set("residentialProxyRegion", residential.region);
+    if (residential.city) params.set("residentialProxyCity", residential.city);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+  try {
+    const res = await doFetch(
+      `${endpoint.origin}${hosted ? "/unblock" : "/content"}?${params.toString()}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          hosted
+            ? { url, content: true, browserWSEndpoint: false, cookies: false, screenshot: false }
+            : { url },
+        ),
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) return null;
+    const raw = await res.text();
+    if (raw.length > MAX_HTML_BYTES) return null;
+    // `/content` returns the HTML itself; `/unblock` wraps it in JSON.
+    if (!hosted) return raw.trim() ? raw : null;
+    const content = (JSON.parse(raw) as { content?: unknown }).content;
+    return typeof content === "string" && content.trim() ? content : null;
+  } catch {
+    // Includes the abort above, a malformed JSON body, and any transport error.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
