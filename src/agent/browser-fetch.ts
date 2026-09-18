@@ -2,6 +2,7 @@ import { fetchResource, fetchResources, type FetchOptions, type FetchRow } from 
 import { extractHttpUrls, isVerifiedStatus, parseFetchStatus } from "./resolvers.ts";
 import { prepareChromeSessionFetch } from "./host-browser.ts";
 import type { BrowserAdapter } from "./types.ts";
+import { getVendor } from "../vendors.ts";
 
 function withStatus(text: string, status: string): string {
   return `${text}\n\n_status: ${status}_`;
@@ -50,17 +51,59 @@ export function sourceForUrl(url: URL): string {
   return "web";
 }
 
+/**
+ * Sibling domains a source legitimately redirects between, so a brand
+ * consolidation does not read as an unsafe redirect.
+ *
+ * Merck is the motivating case: an emdmillipore.com product URL now lands on
+ * www.sigmaaldrich.com. Real Chrome follows that happily, but with only the
+ * requested hostname allowlisted the policy rejected the destination and the
+ * adapter reported `unsafe-url` — which surfaces to the caller as
+ * `not-fetchable`, indistinguishable from the site refusing us. The page was
+ * never blocked at all.
+ *
+ * Each group is an explicit allowlist, not a wildcard: the policy still has to
+ * name every host it will accept.
+ */
+const SIBLING_HOSTS: readonly (readonly string[])[] = [
+  ["neb.com", "www.neb.com"],
+  // Merck's life-science brands, which redirect into one another.
+  [
+    "emdmillipore.com",
+    "www.emdmillipore.com",
+    "merckmillipore.com",
+    "www.merckmillipore.com",
+    "sigmaaldrich.com",
+    "www.sigmaaldrich.com",
+  ],
+];
+
+function inGroup(hostname: string, group: readonly string[]): boolean {
+  const host = hostname.toLowerCase();
+  return group.some((base) => host === base || host.endsWith(`.${base}`));
+}
+
 export function browserHosts(url: URL): string[] {
   const hosts = [url.hostname];
+  for (const group of SIBLING_HOSTS) {
+    if (inGroup(url.hostname, group)) hosts.push(...group);
+  }
   if (url.hostname === "neb.com" || url.hostname.endsWith(".neb.com")) {
-    hosts.push(
-      "neb.com",
-      "www.neb.com",
-      "challenges.cloudflare.com",
-      "static.cloudflareinsights.com",
-    );
+    // Cloudflare's challenge assets, needed to clear NEB's interstitial.
+    hosts.push("challenges.cloudflare.com", "static.cloudflareinsights.com");
   }
   return [...new Set(hosts)];
+}
+
+/**
+ * The first link on a NEB page that matches the vendor's `ungated` pattern —
+ * a PDF manual served without the Cloudflare challenge that gates the HTML.
+ * The pattern lives on the vendor record so search and fetch agree on it.
+ */
+function ungatedNebDocument(links: readonly string[] | undefined): string | undefined {
+  const pattern = getVendor("neb")?.ungated;
+  if (!pattern) return undefined;
+  return links?.find((link) => pattern.test(link));
 }
 
 function officialNebMirror(links: readonly string[] | undefined): string | undefined {
@@ -122,6 +165,14 @@ export async function fetchResourceWithBrowser(
           `in the same default Chrome profile. No redistribution licence was detected. -->\n\n${hit.html}`,
         "display-only-full-text",
       );
+    }
+    // Prefer a document NEB serves openly over the browser-rendered page:
+    // native retrieval returns `ok` rather than display-only, costs no browser,
+    // and the kit manual carries more of the protocol than the HTML summary.
+    const manual = ungatedNebDocument(hit.links);
+    if (manual) {
+      const native = await fetchResource(`url:${manual}`, opts);
+      if (isVerifiedStatus(parseFetchStatus(native))) return native;
     }
     const mirror = officialNebMirror(hit.links);
     if (mirror) {

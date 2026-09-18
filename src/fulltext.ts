@@ -3,28 +3,38 @@
 // article text from open, structured APIs — the same services journals.ts
 // already searches.
 //
-// A tiered chain, like established biomedical MCP tools (fall through until we
-// get open text, then to a citation link):
+// A tiered chain (fall through until we get text, then to a citation link):
 //   1. Resolve the caller's id (DOI / PMID / PMCID) to a PMCID via Europe PMC.
-//   2. GET {source}/{pmcid}/fullTextXML and render the JATS to section-aware
+//   2. On a subscribing academic network, try the publisher's own copy first.
+//      It is the most complete and current rendering of the article, so it is
+//      preferred over a deposited or converted one. Two caveats travel with
+//      that ordering: the result is subscription content labelled
+//      `entitled-full-text`, so an article that also has a CC-BY copy in PMC
+//      now returns under the institution's more restrictive licence; and it is
+//      the slowest tier (landing page, then PDF). Set
+//      PROTOCOLS_ENTITLED_FETCH=off to restore open-access-first ordering.
+//   3. GET {source}/{pmcid}/fullTextXML and render the JATS to section-aware
 //      markdown (procedure sections first; optional single-section filter).
-//   3. Europe PMC 404s? Ask NCBI E-utilities for the same PMCID. Europe PMC
+//      Europe PMC 404s? Ask NCBI E-utilities for the same PMCID. Europe PMC
 //      serves only its open-access subset, while NCBI also serves author
 //      manuscripts — for Nature Protocols that's the difference between 35
 //      articles and ~1,050, and measured over 25 PMC-deposited protocols the
 //      Europe PMC endpoint returned a body for 0 and NCBI for 20.
-//   4. Still nothing? Ask Unpaywall for an open-access copy — it often points
-//      back at a PMC record we can still render, or at least a direct OA link
-//      that beats a paywalled DOI.
-//   5. No open text at all? Return the abstract, which Europe PMC hands us in
-//      step 1 for essentially every indexed article. A paywalled protocol still
-//      yields its aim, principle and timing — far more use than a bare link.
+//   4-7. The publisher's own open PDF, a free-to-read PMC copy outside the OA
+//      subset, then Unpaywall and OpenAlex — each often pointing back at a PMC
+//      record we can still render, or at least a direct OA link that beats a
+//      paywalled DOI.
+//   8. No text at all? Return the abstract, which Europe PMC hands us in step 1
+//      for essentially every indexed article. A paywalled protocol still yields
+//      its aim, principle and timing — far more use than a bare link.
 // Every path ends with a machine-readable `_status: …_` footer so the agent can
 // branch on the outcome without parsing prose.
 //
-// Nothing here works around an access control: NCBI itself withholds the body
-// for articles whose publisher opted out of XML download, and we report that
-// case as an abstract rather than reaching for the publisher's HTML.
+// Nothing here works around an access control. Step 2 uses only the access the
+// calling network already has and never claims it is open; NCBI itself
+// withholds the body for articles whose publisher opted out of XML download,
+// and we report that case as an abstract rather than reaching for the
+// publisher's HTML.
 
 import { type ProviderOptions, fetchWithRetry, stripTags } from "./providers/types.ts";
 import { extractEntitledArticle, extractOaContent, looksLikeBotWall } from "./extract.ts";
@@ -623,7 +633,74 @@ export async function getProtocolFulltext(
   const heading = `# ${title || trimmed}`;
   const doi = doiFor(result, trimmed);
 
-  // --- Step 2: PMC full text — Europe PMC's OA subset, then NCBI. ---
+  // --- Step 2: entitled retrieval, tried before any open copy. ---
+  // Deliberately first among the retrieval tiers: on a subscribing network the
+  // publisher's own copy is the most complete and current rendering of the
+  // article, so it is preferred over a deposited or converted one.
+  //
+  // The cost of that ordering is real and worth naming. This tier returns
+  // subscription content, labelled `entitled-full-text`, whose redistribution
+  // is governed by the institution's licence — so an article that also has a
+  // clean CC-BY copy in PMC now comes back under the more restrictive terms.
+  // It is also the slowest tier (landing page, then PDF) where the PMC XML API
+  // would have answered in one request. Set PROTOCOLS_ENTITLED_FETCH=off to
+  // restore open-first ordering.
+  //
+  // Two gates, not one. The network gate asks "could this address hold any
+  // subscription?"; the entitlement gate asks "does it hold *this journal*?" —
+  // a distinction publishers make and we used to ignore, spending a full PDF
+  // round trip on titles the institution never bought.
+  //
+  // The verdict is cached per journal, so the first article from an unavailable
+  // title pays one landing-page fetch and every later one costs nothing.
+  //
+  // Nothing here is open access: it is content this IP is entitled to, labelled
+  // as such and never described as open.
+  //
+  // It cannot precede step 1: the DOI and journal title it keys on come from
+  // that record.
+  const entitledEnabled = process.env.PROTOCOLS_ENTITLED_FETCH?.trim().toLowerCase() !== "off";
+  let entitlementNote = "";
+  if (doi && entitledEnabled && onAcademicNetwork()) {
+    const via = institutionName() ?? networkContext()?.org ?? "this network";
+    const journal = result.journalInfo?.journal?.title;
+    const key = entitlementKey(`https://doi.org/${doi}`, journal);
+    const known = cachedEntitlement(key);
+
+    if (known?.status === "not-entitled") {
+      // Already established for this journal — skip the round trip entirely.
+      entitlementNote =
+        `\n\n_${via} does not appear to subscribe to ${journal ?? "this journal"} ` +
+        `(${known.evidence}), so the publisher's copy was not attempted._`;
+    } else {
+      const outcome = await extractEntitledArticle(
+        `https://doi.org/${doi}`,
+        { fetchImpl: doFetch, timeoutMs },
+        MAX_CHARS,
+        institutionName(),
+      );
+      rememberEntitlement(key, { status: outcome.entitlement, evidence: outcome.evidence });
+
+      const body = outcome.extracted;
+      // A bot wall or a paywall stub extracts as "text" too; both are worse than
+      // the open tiers below, so only a substantive body short-circuits them.
+      if (body && body.text.trim().length > 2000 && !looksLikeBotWall(body.text)) {
+        return withStatus(
+          `${heading}\n\n_Source: publisher ${body.format} via institutional access ` +
+            `(${via}${journal ? ` · ${journal}` : ""}) — NOT open access; redistribution is ` +
+            `governed by that subscription._\n\n${body.text}`,
+          "entitled-full-text",
+        );
+      }
+      if (outcome.entitlement === "not-entitled") {
+        entitlementNote =
+          `\n\n_${via} does not provide access to ${journal ?? "this journal"} ` +
+          `(publisher said: ${outcome.evidence})._`;
+      }
+    }
+  }
+
+  // --- Step 3: PMC full text — Europe PMC's OA subset, then NCBI. ---
   if (result.pmcid) {
     const hit = await fetchPmcFulltext(result.pmcid, doFetch, timeoutMs, section);
     if (hit) {
@@ -635,7 +712,7 @@ export async function getProtocolFulltext(
     // Both PMC endpoints declined — fall through before giving up.
   }
 
-  // --- Step 2.4: the publisher's own public PDF, when the DOI maps to one. ---
+  // --- Step 4: the publisher's own public PDF, when the DOI maps to one. ---
   // Placed ahead of the PMC and Unpaywall tiers because it is the publisher's
   // native open copy: better licensed than the display-only PMC route below, and
   // it sidesteps an HTML page that may be gated without touching that gate.
@@ -652,7 +729,7 @@ export async function getProtocolFulltext(
     }
   }
 
-  // --- Step 2.5: free-to-read PMC copy outside the OA subset. ---
+  // --- Step 5: free-to-read PMC copy outside the OA subset. ---
   // The tiers above only serve the OA subset, so an article the publisher let PMC
   // display without an open licence lands here rather than in step 2.
   const displayOnly =
@@ -668,7 +745,7 @@ export async function getProtocolFulltext(
     }
   }
 
-  // --- Step 3: Unpaywall — recover a PMC copy, else a direct OA link. ---
+  // --- Step 6: Unpaywall — recover a PMC copy, else a direct OA link. ---
   const oa = await tryUnpaywall(doi, doFetch, timeoutMs);
   if (oa?.pmcid) {
     const hit = await fetchPmcFulltext(oa.pmcid, doFetch, timeoutMs, section);
@@ -684,7 +761,7 @@ export async function getProtocolFulltext(
     }
   }
 
-  // --- Step 3.2: OpenAlex — catch repository deposits ahead of EPMC indexing. ---
+  // --- Step 7: OpenAlex — catch repository deposits ahead of EPMC indexing. ---
   // OpenAlex can know about a PMC landing page before Europe PMC exposes the
   // PMCID in its own search record. We still ask the proper PMC APIs first. If
   // they decline and OpenAlex supplies no licence, retain the browser-readable
@@ -755,59 +832,7 @@ export async function getProtocolFulltext(
     );
   }
 
-  // --- Step 3.5: entitled retrieval. ---
-  // Two gates, not one. The network gate asks "could this address hold any
-  // subscription?"; the entitlement gate asks "does it hold *this journal*?" —
-  // a distinction publishers make and we used to ignore, spending a full PDF
-  // round trip on titles the institution never bought.
-  //
-  // The verdict is cached per journal, so the first article from an unavailable
-  // title pays one landing-page fetch and every later one costs nothing.
-  //
-  // Nothing here is open access: it is content this IP is entitled to, labelled
-  // as such and never described as open. PROTOCOLS_ENTITLED_FETCH=off skips it.
-  const entitledEnabled = process.env.PROTOCOLS_ENTITLED_FETCH?.trim().toLowerCase() !== "off";
-  let entitlementNote = "";
-  if (doi && entitledEnabled && onAcademicNetwork()) {
-    const via = institutionName() ?? networkContext()?.org ?? "this network";
-    const journal = result.journalInfo?.journal?.title;
-    const key = entitlementKey(`https://doi.org/${doi}`, journal);
-    const known = cachedEntitlement(key);
-
-    if (known?.status === "not-entitled") {
-      // Already established for this journal — skip the round trip entirely.
-      entitlementNote =
-        `\n\n_${via} does not appear to subscribe to ${journal ?? "this journal"} ` +
-        `(${known.evidence}), so the publisher's copy was not attempted._`;
-    } else {
-      const outcome = await extractEntitledArticle(
-        `https://doi.org/${doi}`,
-        { fetchImpl: doFetch, timeoutMs },
-        MAX_CHARS,
-        institutionName(),
-      );
-      rememberEntitlement(key, { status: outcome.entitlement, evidence: outcome.evidence });
-
-      const body = outcome.extracted;
-      // A bot wall or a paywall stub extracts as "text" too; both are worse than
-      // the abstract we already hold, so only a substantive body is accepted.
-      if (body && body.text.trim().length > 2000 && !looksLikeBotWall(body.text)) {
-        return withStatus(
-          `${heading}\n\n_Source: publisher ${body.format} via institutional access ` +
-            `(${via}${journal ? ` · ${journal}` : ""}) — NOT open access; redistribution is ` +
-            `governed by that subscription._\n\n${body.text}`,
-          "entitled-full-text",
-        );
-      }
-      if (outcome.entitlement === "not-entitled") {
-        entitlementNote =
-          `\n\n_${via} does not provide access to ${journal ?? "this journal"} ` +
-          `(publisher said: ${outcome.evidence})._`;
-      }
-    }
-  }
-
-  // --- Step 4: the abstract, which beats a bare link for a paywalled article. ---
+  // --- Step 9: the abstract, which beats a bare link for a paywalled article. ---
   const pmcNote = result.pmcid
     ? `\n\nA PMC copy exists and is free to read in a browser, though its full text isn't served ` +
       `for download: https://www.ncbi.nlm.nih.gov/pmc/articles/${result.pmcid}/`

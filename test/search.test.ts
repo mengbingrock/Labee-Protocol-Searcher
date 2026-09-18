@@ -226,3 +226,63 @@ describe("result fetchability", () => {
     expect(md).toContain("`c` · links-only");
   });
 });
+
+// A vendor's grade describes its HTML. NEB's Cloudflare challenge gates every
+// page, but its PDF manuals under /-/media/ are served to a plain request
+// (measured 2026-09-17). Those results must be graded on what they are, not on
+// what the site usually does — and listed first, so the agent's first `fetch`
+// is the one that works.
+describe("ungated vendor documents", () => {
+  const env = { ...process.env };
+  afterEach(() => {
+    process.env = { ...env };
+  });
+
+  const NEB_WITH_MANUAL = JSON.stringify({
+    web: {
+      results: [
+        { title: "Q5 SDM Kit", url: "https://www.neb.com/en-us/products/e0554", description: "product" },
+        { title: "Q5 SDM Protocol", url: "https://www.neb.com/en-us/protocols/q5-sdm", description: "steps" },
+        {
+          title: "Manual E0554",
+          url: "https://www.neb.com/en-us/-/media/nebus/files/manuals/manuale0554.pdf?rev=1",
+          description: "kit manual",
+        },
+        { title: "SMARTer cDNA Kit", url: "https://www.takarabio.com/products/cdna", description: "cDNA" },
+      ],
+    },
+  });
+
+  it("grades a NEB manual PDF full and lists it before the gated pages", async () => {
+    process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
+    process.env.BRAVE_API_KEY = "k";
+    const f = (async (url: string) =>
+      new Response(url.includes("api.search.brave.com") ? NEB_WITH_MANUAL : "{}", { status: 200 })) as unknown as typeof fetch;
+    const out = await search("q5", { sources: ["neb", "takarabio"], providerOpts: { fetchImpl: f } });
+
+    const neb = out.results.filter((r) => r.source === "neb");
+    expect(neb.map((r) => r.title)).toEqual(["Manual E0554", "Q5 SDM Kit", "Q5 SDM Protocol"]);
+    expect(neb[0]!.fetchable).toBe("full");
+    expect(neb[1]!.fetchable).toBe("none");
+    expect(neb[2]!.fetchable).toBe("none");
+    // Sources without a pattern are left exactly as the provider ranked them.
+    expect(out.results.find((r) => r.source === "takarabio")!.fetchable).toBe("full");
+  });
+
+  it("does not let a lookalike host or a non-PDF path inherit the grade", async () => {
+    process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
+    process.env.BRAVE_API_KEY = "k";
+    const body = JSON.stringify({
+      web: {
+        results: [
+          { title: "Not NEB", url: "https://neb.com.evil.test/x.pdf", description: "" },
+          { title: "PDF-ish path", url: "https://www.neb.com/en-us/protocols/pdf-guide", description: "" },
+        ],
+      },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await search("q5", { sources: ["neb"], providerOpts: { fetchImpl: f } });
+    // The lookalike never buckets as NEB at all; the .pdf-less path stays gated.
+    expect(out.results.map((r) => [r.title, r.fetchable])).toEqual([["PDF-ish path", "none"]]);
+  });
+});

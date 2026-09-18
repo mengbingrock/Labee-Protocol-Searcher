@@ -13,12 +13,20 @@
 import { type ProviderOptions, decodeEntities, stripTags, userAgent } from "./providers/types.ts";
 import { CookieJar, defaultUrlValidator, fetchFollowingWithCookies } from "./cookies.ts";
 import { type Entitlement, classifyEntitlement } from "./entitlement.ts";
+import { browserlessConfig, looksLikeSoftNotFound, renderWithBrowserless } from "./browserless.ts";
+import { activeResidentialSelector } from "./residential.ts";
 
 export type ExtractFormat = "html" | "xml" | "pdf" | "json";
 
 export interface Extracted {
   text: string;
   format: ExtractFormat;
+  /**
+   * Set when the text came from the remote-browser fallback rather than an
+   * ordinary request. Callers that assign a licence-bearing status must treat
+   * it as browser-derived: see fetchWebPage in fetch.ts.
+   */
+  via?: "browserless";
 }
 
 // Don't pull a whole book into memory for a "best-effort" extraction.
@@ -209,7 +217,7 @@ async function fetchAllowingCookieGate(
  * available) so the caller can fall back to returning the bare link. Never
  * throws.
  */
-export async function extractOaContent(
+async function extractDirect(
   url: string,
   opts: ProviderOptions,
   maxChars: number,
@@ -281,6 +289,75 @@ export async function extractOaContent(
   }
 }
 
+/**
+ * A PDF rendered in a browser opens in the PDF viewer, which replaces the JS
+ * context the extractor would read — the remote browser returns an error rather
+ * than the document. JSON endpoints come back wrapped in viewer markup for the
+ * same reason. Neither is worth a round trip.
+ */
+function suitableForBrowser(url: string): boolean {
+  return !/\.(?:pdf|json|xml)(?:$|\?)/i.test(url);
+}
+
+/**
+ * Second attempt through a remote browser, for pages that serve content only to
+ * a real one. Returns null unless it produced something better than the direct
+ * attempt already had, which was nothing.
+ */
+async function extractViaBrowser(
+  url: string,
+  opts: ProviderOptions,
+  maxChars: number,
+): Promise<Extracted | null> {
+  const cfg = browserlessConfig();
+  if (!cfg || !suitableForBrowser(url)) return null;
+
+  // Browserless fetches whatever URL we hand it, from its own network, so the
+  // public-address policy has to be applied before the call and not after.
+  try {
+    await defaultUrlValidator(opts)(url);
+  } catch {
+    return null;
+  }
+
+  // When this machine is registered as a residential exit, the render leaves
+  // from here rather than from the server's datacenter — which is both less
+  // likely to hit a bot wall and closer to the network the user is actually on.
+  const html = await renderWithBrowserless(
+    url,
+    opts.fetchImpl ?? fetch,
+    cfg,
+    activeResidentialSelector(),
+  );
+  if (!html) return null;
+
+  const text = htmlToText(html);
+  // `/unblock` reports no HTTP status, so a soft 404 and a real page are
+  // indistinguishable by transport alone — both checks below are load-bearing
+  // here in a way they are not on the direct path, which still has `res.status`.
+  if (!text || looksLikeBotWall(text) || looksLikeSoftNotFound(text)) return null;
+  return { text: cap(text, maxChars), format: "html", via: "browserless" };
+}
+
+/**
+ * Retrieve and extract `url`, falling back to a remote browser when an ordinary
+ * request cannot get the content.
+ *
+ * Order matters: the direct attempt is faster, free, and made from the
+ * operator's own address, so it always runs first. The fallback is reached only
+ * once that has returned nothing, and is a no-op unless BROWSERLESS_TOKEN is
+ * set.
+ */
+export async function extractOaContent(
+  url: string,
+  opts: ProviderOptions,
+  maxChars: number,
+): Promise<Extracted | null> {
+  const direct = await extractDirect(url, opts, maxChars);
+  if (direct) return direct;
+  return extractViaBrowser(url, opts, maxChars);
+}
+
 // Phrases that only ever appear on a challenge/interstitial page, never in an
 // article. Kept narrow on purpose: a false positive silently hides real content.
 const BOT_WALL_RE =
@@ -320,6 +397,16 @@ export function findCitationPdfUrl(html: string, baseUrl: string): string | null
  *
  * A subscription landing page typically carries only the abstract, so the PDF is
  * the document. Returns whichever body is larger, or null if neither is usable.
+ *
+ * This path never falls back to the remote browser, and the omission is
+ * deliberate rather than an oversight. Entitlement is decided by IP: a request
+ * routed through Browserless leaves a datacenter, not the subscribing network,
+ * so anything it returned would be labelled `entitled-full-text` while having
+ * been obtained under no entitlement at all. That is a provenance defect, and
+ * it matters more since entitled retrieval became the first tier in
+ * fulltext.ts — a wrong answer here now pre-empts every open-access tier below
+ * it. When this path fails, the correct outcome is to fall through to those
+ * tiers, which may use the browser fallback on their own openly-licensed URLs.
  */
 export interface EntitledOutcome {
   extracted: Extracted | null;

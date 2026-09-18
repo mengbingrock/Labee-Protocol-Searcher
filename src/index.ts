@@ -22,6 +22,7 @@ import { VENDORS } from "./vendors.ts";
 import { describeNetworkContext, detectNetworkContext } from "./network-context.ts";
 import { fetchResourceWithBrowser } from "./agent/browser-fetch.ts";
 import { browserAdapterForMode, shutdownDefaultBrowser } from "./agent/default-browser.ts";
+import { startResidentialAgent } from "./residential.ts";
 
 interface CliArgs {
   query?: string;
@@ -167,8 +168,15 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
       process.exit(1);
     });
 } else {
+  // stdio mode is the thin layer on the user's own PC, so this is the one mode
+  // that may offer the machine as a residential exit. `--http` deliberately
+  // does not: that process is the hosted server itself. Off unless configured.
+  const residential = startResidentialAgent();
   detectNetwork()
     .then(() => runMcpServer())
-    .finally(() => shutdownDefaultBrowser())
+    .finally(() => {
+      residential?.stop();
+      return shutdownDefaultBrowser();
+    })
     .then(() => process.exit(0));
 }

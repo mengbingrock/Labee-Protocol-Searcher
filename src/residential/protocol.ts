@@ -1,0 +1,106 @@
+export const residentialProxyAgentPath = '/residential-proxy/agent';
+export const residentialProxyProtocolVersion = 1;
+/**
+ * v2 adds an encrypted handshake: the agent authenticates with a MAC instead
+ * of a bearer header, and every frame after the handshake is ciphertext.
+ */
+export const residentialProxySecureProtocolVersion = 2;
+export const residentialProxyMaxFrameBytes = 1024 * 1024;
+
+export interface ResidentialProxyGeo {
+  city?: string | undefined;
+  country: string;
+  region?: string | undefined;
+}
+
+export interface ResidentialProxySelector {
+  city?: string | undefined;
+  country?: string | undefined;
+  region?: string | undefined;
+}
+
+export type ResidentialProxyRotation = 'connection' | 'session';
+
+/** Sent inside the encrypted handshake so geo labels never appear in the URL. */
+export interface ResidentialProxyAuthPayload {
+  descriptor: ResidentialProxyAgentDescriptor;
+}
+
+export interface ResidentialProxyAgentDescriptor extends ResidentialProxyGeo {
+  id: string;
+  maxConnections: number;
+}
+
+export type ResidentialProxyServerMessage =
+  | {
+      host: string;
+      id: string;
+      port: number;
+      type: 'open';
+    }
+  | {
+      data: string;
+      id: string;
+      type: 'data';
+    }
+  | {
+      id: string;
+      type: 'end';
+    };
+
+export type ResidentialProxyAgentMessage =
+  | {
+      id: string;
+      type: 'opened';
+    }
+  | {
+      data: string;
+      id: string;
+      type: 'data';
+    }
+  | {
+      id: string;
+      type: 'end';
+    }
+  | {
+      id: string;
+      message: string;
+      type: 'error';
+    };
+
+export const normalizeGeo = (value: string | undefined): string | undefined =>
+  value?.trim().toLowerCase() || undefined;
+
+export const agentMatchesSelector = (
+  agent: ResidentialProxyGeo,
+  selector: ResidentialProxySelector,
+): boolean =>
+  (!selector.country ||
+    normalizeGeo(agent.country) === normalizeGeo(selector.country)) &&
+  (!selector.region ||
+    normalizeGeo(agent.region) === normalizeGeo(selector.region)) &&
+  (!selector.city || normalizeGeo(agent.city) === normalizeGeo(selector.city));
+
+export const parseResidentialProxyMessage = <T>(raw: unknown): T | null => {
+  try {
+    const text =
+      typeof raw === 'string'
+        ? raw
+        : Buffer.isBuffer(raw)
+          ? raw.toString('utf8')
+          : Array.isArray(raw)
+            ? Buffer.concat(raw).toString('utf8')
+            : raw instanceof ArrayBuffer
+              ? Buffer.from(raw).toString('utf8')
+              : '';
+    if (!text || Buffer.byteLength(text) > residentialProxyMaxFrameBytes) {
+      return null;
+    }
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as T)
+      : null;
+  } catch {
+    return null;
+  }
+};

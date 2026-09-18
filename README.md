@@ -136,6 +136,79 @@ and a trusted local MCP process; it is not intended for the hosted service.
 Operator-managed CDP remains available as `browser: cdp` via
 `PROTOCOLS_BROWSER_CDP_URL`.
 
+### Optional remote browser for headless installs
+
+Every mode above needs a browser on the machine running Labee, so none of them
+help a headless server or CI. Setting `BROWSERLESS_TOKEN` enables a remote
+browser instead, used as a **fallback inside extraction**: an ordinary request
+is always made first, and the remote browser is tried only once that has
+returned nothing. What it recovers has changed over time, so the measurements
+are dated. On 2026-08-28 the hosted browserless.io `/unblock` endpoint
+retrieved all three sources graded `links-only`; by 2026-09-17 it retrieved
+only `neb.com` (about 7 seconds), while `sigmaaldrich.com` and
+`emdmillipore.com` answered every remote path — hosted, self-hosted, and a
+residential exit — with an Akamai denial or an HTTP/2 rejection. Those two are
+still readable with the local `--browser default` mode above, which drives a
+real Chrome; the block is on the client fingerprint, not the network.
+
+NEB needs no browser at all for the copy that matters most. Its HTML sits
+behind a Cloudflare challenge, but its PDF manuals under `/-/media/` are served
+to a plain request. `search` grades those results `fetchable` and lists them
+ahead of the vendor's gated pages, and `fetch` returns them as `ok` — the
+E0554 kit manual extracts to 24k characters in about a second, more than twice
+what its HTML protocol page yields through a browser.
+
+Two limits are deliberate. Results are labelled `display-only-full-text` rather
+than `ok`, because a page that needed a remote browser is not the same evidence
+as one a plain request returned. And entitled retrieval never uses it: that path
+depends on the calling network's own IP, so content fetched from a datacenter
+could not honestly be labelled `entitled-full-text`.
+
+Unset the token, or set `PROTOCOLS_BROWSERLESS=off`, to disable it. Without a
+token nothing changes.
+
+### Optional residential exit for the remote browser
+
+The remote browser above calls from its own datacenter, which is exactly why it
+is barred from entitled retrieval and why vendor sites are hostile to it. This
+option removes that constraint by turning the relationship around: the MCP layer
+running on **your** PC registers itself with a self-hosted browserless server as
+a residential exit, and the server routes your browser traffic back out through
+your connection. The remote browser then calls from the same network you are on.
+
+```bash
+PROTOCOLS_RESIDENTIAL_PROXY=on
+RESIDENTIAL_PROXY_CONSENT=true
+RESIDENTIAL_PROXY_AGENT_TOKEN=<the server's agent token>
+BROWSERLESS_URL=https://browserless.example.com
+RESIDENTIAL_PROXY_COUNTRY=US
+```
+
+The agent dials **out** over a WebSocket, so your PC never opens a listening
+port. Tunnelled traffic is limited to ports 80 and 443 and to public addresses —
+loopback, private, link-local and cloud-metadata ranges are refused after DNS
+resolution — and `RESIDENTIAL_PROXY_ALLOW_HOSTS` narrows it further. The control
+channel is encrypted end to end (X25519 + ChaCha20-Poly1305, keyed off the
+shared token) independently of TLS, so a CDN or load balancer in front of the
+server relays ciphertext it cannot read.
+
+Four things to know before enabling it:
+
+- It needs a **self-hosted** browserless with `RESIDENTIAL_PROXY_ENABLED=true`.
+  The hosted browserless.io service has no such feature.
+- Residential calls go to `/content`; `/unblock` is hosted-only and 404s on a
+  self-hosted server.
+- Only stdio mode registers. Under `--http` this process *is* the server, and a
+  server offering itself as a residential exit would be a datacenter IP wearing
+  the wrong label.
+- Consent is a separate variable from enabling, deliberately. Other people's
+  browser traffic will exit from your IP address.
+
+Entitled retrieval still does not use the remote browser, even with a
+residential exit registered. Making `entitled-full-text` depend on the exit
+genuinely being the subscribing network is a provenance decision, not a
+plumbing one, and it has not been taken here.
+
 For NEB, `search` also accepts `browser: default`. Labee opens each returned
 NEB page in its dedicated window and retains the rendered content HTML. A following
 `fetch` of the result ID automatically reuses the same profile and returns the

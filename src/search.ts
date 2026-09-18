@@ -383,7 +383,9 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
         fetchable = article.resolvable ? grade : "none";
       } else {
         id = `url:${r.url}`;
-        fetchable = grade;
+        // A vendor's grade describes its HTML; some serve documents openly
+        // (NEB's PDF manuals). Those are the results worth fetching first.
+        fetchable = vendor?.ungated?.test(r.url) ? "full" : grade;
       }
       if (seen.has(id)) continue;
       seen.add(id);
@@ -403,6 +405,13 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
         ...(r.discoveredBy?.length ? { discoveredBy: r.discoveredBy } : {}),
         ...(availability ? { availability } : {}),
       });
+    }
+    // Ungated documents ahead of gated pages, otherwise provider order kept
+    // (Array.prototype.sort is stable). Only sources that declare a pattern
+    // are touched, so every other listing is exactly as the provider ranked it.
+    if (vendor?.ungated) {
+      const gated = (row: UnifiedResult): number => (row.url && vendor.ungated!.test(row.url) ? 0 : 1);
+      rows.sort((a, b) => gated(a) - gated(b));
     }
 
     sources.push({
