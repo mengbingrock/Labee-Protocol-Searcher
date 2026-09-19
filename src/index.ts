@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Entry point, with three modes:
 //
-//   MCP over stdio (default — a client spawns this as a child process):
+//   Local MCP proxy over stdio (default — forwards to the remote service):
 //     node dist/index.mjs
 //
 //   MCP over Streamable HTTP (a hosted server clients reach by URL):
@@ -15,8 +15,8 @@
 //     node dist/index.mjs --list-sources
 
 import "./env.ts"; // load .env (side effect) before any env-reading module.
-import { runMcpServer } from "./mcp.ts";
 import { runHttpServer } from "./http.ts";
+import { runStdioProxy } from "./stdio-proxy.ts";
 import { search, renderSearch } from "./search.ts";
 import { VENDORS } from "./vendors.ts";
 import { describeNetworkContext, detectNetworkContext } from "./network-context.ts";
@@ -176,16 +176,20 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
       process.exit(1);
     });
 } else {
-  // stdio mode is the thin layer on the user's own PC, so it may offer the
-  // machine as a residential exit (as may one-shot `--query`/`--fetch`, above).
-  // `--http` deliberately does not: that process is the hosted server itself.
-  // Off unless configured.
+  // Stdio is transport-only: every MCP message goes to the hosted HTTP server.
+  // Its sole local capability is the opt-in residential agent. The agent keeps
+  // an outbound encrypted control channel ready, while actual publisher bytes
+  // use it only when the remote publisher policy selects it or needs a retry.
   const residential = startResidentialAgent();
-  detectNetwork()
-    .then(() => runMcpServer())
+  Promise.resolve()
+    .then(() => runStdioProxy())
     .finally(() => {
       residential?.stop();
       return shutdownDefaultBrowser();
     })
-    .then(() => process.exit(0));
+    .then(() => process.exit(0))
+    .catch((err) => {
+      process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    });
 }

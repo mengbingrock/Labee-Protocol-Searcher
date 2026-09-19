@@ -3,10 +3,13 @@ import {
   activeResidentialSelector,
   awaitResidentialReady,
   catalogAllowHosts,
+  decodeResidentialOffer,
+  encodeResidentialOffer,
   residentialAllows,
   residentialConfig,
   residentialSelectorFor,
   startResidentialAgent,
+  withResidentialOffer,
 } from "../src/residential.ts";
 import { endpointFlavor, renderWithBrowserless } from "../src/browserless.ts";
 
@@ -198,6 +201,35 @@ describe("browserless residential routing", () => {
 });
 
 describe("allowlist and routing", () => {
+  it("scopes a forwarded stdio residential offer to one remote request", async () => {
+    const offer = {
+      agentId: "macbook-agent",
+      allowHosts: ["*.nature.com"],
+      selector: { country: "US", region: "CA" },
+    };
+    expect(decodeResidentialOffer(encodeResidentialOffer(offer))).toEqual(offer);
+    await withResidentialOffer(offer, async () => {
+      expect(await awaitResidentialReady(5_000)).toBe(true);
+      expect(activeResidentialSelector()).toEqual({ country: "US", region: "CA" });
+      expect(residentialSelectorFor("https://www.nature.com/articles/x")).toEqual({
+        country: "US",
+        region: "CA",
+      });
+      expect(residentialSelectorFor("https://europepmc.org/articles/x")).toBeNull();
+    });
+    expect(activeResidentialSelector()).toBeNull();
+  });
+
+  it("rejects malformed forwarded residential offers", () => {
+    expect(decodeResidentialOffer("not+base64")).toBeNull();
+    const malformed = Buffer.from(JSON.stringify({
+      agentId: "bad agent id",
+      allowHosts: ["*"],
+      selector: { country: "US" },
+    })).toString("base64url");
+    expect(decodeResidentialOffer(malformed)).toBeNull();
+  });
+
   it("derives the default allowlist from the catalog, as wildcard hosts", () => {
     const hosts = catalogAllowHosts();
     expect(hosts).toContain("*.neb.com");

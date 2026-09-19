@@ -1,7 +1,7 @@
 {
   "name": "labee-protocol-searcher",
   "version": "0.5.0",
-  "description": "Search and retrieve laboratory protocols with integrated-Browser and explicit connected-Chrome fallbacks.",
+  "description": "Search and retrieve laboratory protocols through the hosted MCP service, with a thin local stdio and optional residential-exit bridge.",
   "author": {
     "name": "Labee",
     "url": "https://github.com/mengbingrock"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Labee Protocol Searcher",
     "shortDescription": "Search protocols with safe browser-assisted retrieval.",
-    "longDescription": "Search protocol journals, vendors, and REBASE. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies and caches publisher content as entitled full text.",
+    "longDescription": "Forward MCP calls from a thin local stdio bridge to the hosted Labee service, search protocol journals, vendors, and REBASE, and offer an explicitly enabled residential exit only for publisher routes that need it. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies.",
     "developerName": "Labee",
     "category": "Productivity",
     "capabilities": [

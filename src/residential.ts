@@ -6,11 +6,11 @@
 // entitlement verdict describes. That constraint is a property of *where the
 // browser calls from*, not of the browser itself.
 //
-// This module removes it. The MCP layer running on the user's PC opens an
+// This module removes it. The stdio bridge running on the user's PC opens an
 // outbound WebSocket to the browserless server and offers itself as a
-// residential exit; the server then routes that user's browser traffic back out
-// through this machine. The remote browser ends up calling from the same
-// network the entitlement verdict was computed for — the user's own.
+// residential exit. It forwards safe routing metadata with relevant MCP calls;
+// the remote service then routes only selected browser retries back out through
+// this machine. The remote browser ends up calling from the user's own network.
 //
 // Four properties this deliberately keeps:
 //
@@ -29,6 +29,7 @@
 // TLS in front of the server -- a CDN, a load balancer -- relays ciphertext it
 // cannot read. See residential/README.md for the vendored implementation.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { hostname } from "node:os";
 
 import {
@@ -95,10 +96,27 @@ export interface ResidentialSelector {
   region?: string | undefined;
 }
 
+/**
+ * A connected stdio proxy advertises this capability to the remote MCP server.
+ * It contains routing labels and the local agent's own destination allowlist,
+ * but never the residential-agent secret. The remote server scopes the offer
+ * to one authenticated MCP request and chooses the residential route only for
+ * a publisher configured to prefer it or for a datacenter retry.
+ */
+export interface ResidentialOffer {
+  agentId: string;
+  allowHosts: string[];
+  selector: ResidentialSelector;
+}
+
+export const RESIDENTIAL_OFFER_HEADER = "x-labee-residential-offer";
+
 export interface ResidentialHandle {
   /** True once the server has accepted the registration. */
   readonly connected: boolean;
   readonly id: string;
+  /** Safe routing metadata for the remote MCP server; null until connected. */
+  readonly offer: ResidentialOffer | null;
   stop(): void;
 }
 
@@ -196,6 +214,100 @@ export function residentialConfig(
 
 let active: ObservableResidentialAgent | null = null;
 let activeConfig: ResidentialConfig | null = null;
+const requestResidentialOffer = new AsyncLocalStorage<ResidentialOffer>();
+
+function selectorFromConfig(cfg: ResidentialConfig): ResidentialSelector {
+  return {
+    city: cfg.city,
+    country: cfg.country,
+    region: cfg.region,
+  };
+}
+
+function offerFromConfig(cfg: ResidentialConfig): ResidentialOffer {
+  return {
+    agentId: cfg.id,
+    allowHosts: [...cfg.allowHosts],
+    selector: selectorFromConfig(cfg),
+  };
+}
+
+/** The connected local exit, if this process currently owns one. */
+export function activeResidentialOffer(): ResidentialOffer | null {
+  if (!active?.connected || !activeConfig) return null;
+  return offerFromConfig(activeConfig);
+}
+
+/**
+ * Encode routing metadata for an authenticated MCP request. Base64url keeps
+ * user-supplied geo labels out of raw HTTP header syntax.
+ */
+export function encodeResidentialOffer(offer: ResidentialOffer): string {
+  return Buffer.from(JSON.stringify(offer), "utf8").toString("base64url");
+}
+
+/** Parse and strictly bound an offer received by the remote MCP endpoint. */
+export function decodeResidentialOffer(value: string | undefined): ResidentialOffer | null {
+  if (!value || value.length > 16_384 || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const decoded = Buffer.from(value, "base64url");
+    if (decoded.length > 8_192) return null;
+    const parsed = JSON.parse(decoded.toString("utf8")) as {
+      agentId?: unknown;
+      allowHosts?: unknown;
+      selector?: { city?: unknown; country?: unknown; region?: unknown };
+    };
+    if (typeof parsed.agentId !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(parsed.agentId)) {
+      return null;
+    }
+    if (!Array.isArray(parsed.allowHosts) || parsed.allowHosts.length < 1 || parsed.allowHosts.length > 128) {
+      return null;
+    }
+    if (parsed.allowHosts.some((entry) => typeof entry !== "string")) return null;
+    const allowHosts = (parsed.allowHosts as string[]).map((entry) => entry.trim().toLowerCase());
+    if (allowHosts.some((entry) =>
+      !entry || entry.length > 253 || /[\u0000-\u0020\u007f/\\:@]/.test(entry) ||
+      (entry !== "*" && !/^(?:\*\.)?[a-z0-9.-]+$/.test(entry)))) {
+      return null;
+    }
+    const country = parsed.selector?.country;
+    if (typeof country !== "string") return null;
+    if (!/^[a-z]{2}$/i.test(country)) return null;
+    const optionalLabel = (label: unknown): string | undefined | null => {
+      if (label === undefined) return undefined;
+      if (typeof label !== "string") return null;
+      const text = label.trim();
+      if (!text || text.length > 64 || /[\u0000-\u001f\u007f]/.test(text)) return null;
+      return text;
+    };
+    const city = optionalLabel(parsed.selector?.city);
+    const region = optionalLabel(parsed.selector?.region);
+    if (city === null || region === null) return null;
+    return {
+      agentId: parsed.agentId,
+      allowHosts,
+      selector: {
+        ...(city ? { city } : {}),
+        country,
+        ...(region ? { region } : {}),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Run one remote MCP request with its caller's residential capability. */
+export function withResidentialOffer<T>(
+  offer: ResidentialOffer | null,
+  fn: () => T,
+): T {
+  return offer ? requestResidentialOffer.run(offer, fn) : fn();
+}
+
+function currentResidentialOffer(): ResidentialOffer | null {
+  return requestResidentialOffer.getStore() ?? activeResidentialOffer();
+}
 
 /**
  * The selector to send with a browserless call, or null when no exit from this
@@ -204,19 +316,19 @@ let activeConfig: ResidentialConfig | null = null;
  * agent that is no longer there.
  */
 export function activeResidentialSelector(): ResidentialSelector | null {
-  if (!active?.connected || !activeConfig) return null;
-  return {
-    city: activeConfig.city,
-    country: activeConfig.country,
-    region: activeConfig.region,
-  };
+  return currentResidentialOffer()?.selector ?? null;
 }
 
 /** Whether the registered exit would carry a connection to this URL's host. */
 export function residentialAllows(url: string): boolean {
-  if (!activeConfig) return false;
+  // This answers whether the configured exit permits a host, independently of
+  // whether its asynchronous registration has completed. The selector helper
+  // below separately requires a connected/request-scoped offer.
+  const offer = requestResidentialOffer.getStore()
+    ?? (activeConfig ? offerFromConfig(activeConfig) : null);
+  if (!offer) return false;
   try {
-    return hostMatchesAllowlist(new URL(url).hostname, activeConfig.allowHosts);
+    return hostMatchesAllowlist(new URL(url).hostname, offer.allowHosts);
   } catch {
     return false;
   }
@@ -233,7 +345,15 @@ export function residentialAllows(url: string): boolean {
  * URLs, none of which are in the catalog.
  */
 export function residentialSelectorFor(url: string): ResidentialSelector | null {
-  return residentialAllows(url) ? activeResidentialSelector() : null;
+  const offer = currentResidentialOffer();
+  if (!offer) return null;
+  try {
+    return hostMatchesAllowlist(new URL(url).hostname, offer.allowHosts)
+      ? offer.selector
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -244,6 +364,10 @@ export function residentialSelectorFor(url: string): ResidentialSelector | null 
  * the common case costs nothing.
  */
 export async function awaitResidentialReady(timeoutMs: number): Promise<boolean> {
+  // A request-scoped offer was attached only after its stdio agent reported a
+  // completed handshake, so the remote server need not (and cannot) wait on a
+  // local object it does not own.
+  if (requestResidentialOffer.getStore()) return true;
   // Hold the agent we started waiting on. A stopped agent clears `active`
   // asynchronously, so reading the module variable inside the loop would race
   // that teardown; if the active agent changes, this wait is void.
@@ -319,6 +443,9 @@ export function startResidentialAgent(
       return agent.connected;
     },
     id: cfg.id,
+    get offer() {
+      return agent.connected ? offerFromConfig(cfg) : null;
+    },
     stop() {
       controller.abort();
       agent.stop();

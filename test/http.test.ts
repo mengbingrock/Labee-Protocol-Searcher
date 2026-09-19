@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { runHttpServer } from "../src/http.ts";
+import { encodeResidentialOffer, RESIDENTIAL_OFFER_HEADER } from "../src/residential.ts";
 
 const TOKEN = "test-token-abcdefghijklmnop";
 
@@ -79,6 +80,27 @@ describe("MCP Streamable HTTP transport", () => {
     const res = await post({ jsonrpc: "2.0", method: "notifications/initialized" });
     expect(res.status).toBe(202);
     expect(await res.text()).toBe("");
+  });
+
+  it("accepts a bounded residential capability and rejects malformed metadata", async () => {
+    const good = await post({ jsonrpc: "2.0", id: 8, method: "ping" }, {
+      headers: {
+        [RESIDENTIAL_OFFER_HEADER]: encodeResidentialOffer({
+          agentId: "test-agent",
+          allowHosts: ["*.nature.com"],
+          selector: { country: "US" },
+        }),
+      },
+    });
+    expect(good.status).toBe(200);
+
+    const bad = await post({ jsonrpc: "2.0", id: 9, method: "ping" }, {
+      headers: { [RESIDENTIAL_OFFER_HEADER]: "not+base64" },
+    });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()) as { error: { message: string } }).toMatchObject({
+      error: { message: "Invalid residential capability header" },
+    });
   });
 
   it("returns 405 with an Allow header for GET and DELETE", async () => {

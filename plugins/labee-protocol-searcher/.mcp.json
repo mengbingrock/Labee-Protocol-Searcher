@@ -6,6 +6,25 @@
       "args": [
         "-y",
         "@mengbingrock/labee-protocol-searcher@0.5.0"
+      ],
+      "env_vars": [
+        "MCP_BEARER_TOKEN",
+        "PROTOCOLS_REMOTE_MCP_URL",
+        "PROTOCOLS_REMOTE_MCP_TOKEN",
+        "PROTOCOLS_REMOTE_MCP_TIMEOUT_MS",
+        "PROTOCOLS_RESIDENTIAL_PROXY",
+        "RESIDENTIAL_PROXY_CONSENT",
+        "RESIDENTIAL_PROXY_AGENT_TOKEN",
+        "RESIDENTIAL_PROXY_URL",
+        "BROWSERLESS_URL",
+        "RESIDENTIAL_PROXY_COUNTRY",
+        "RESIDENTIAL_PROXY_REGION",
+        "RESIDENTIAL_PROXY_CITY",
+        "RESIDENTIAL_PROXY_MAX_CONNECTIONS",
+        "RESIDENTIAL_PROXY_ALLOW_HOSTS",
+        "RESIDENTIAL_PROXY_READY_TIMEOUT_MS",
+        "RESIDENTIAL_PROXY_AGENT_ID",
+        "RESIDENTIAL_PROXY_CONTROL_PROXY"
       ]
     }
   }

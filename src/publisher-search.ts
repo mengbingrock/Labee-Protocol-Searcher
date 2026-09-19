@@ -146,9 +146,9 @@ export async function searchPublisher(
   }
 
   // Sources that did not already prefer the local exit get a residential retry
-  // only after an empty datacenter search. The agent is started by stdio/CLI
-  // setup; this bounded wait covers its asynchronous registration without
-  // making publisher search depend on it.
+  // only after an empty datacenter search. Locally the bounded wait covers an
+  // agent's asynchronous registration; remotely a request-scoped stdio offer
+  // is already ready and returns immediately.
   if (!residentialAttempted) await awaitResidentialReady(4_000);
   const selector = residentialAttempted
     ? null

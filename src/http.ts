@@ -1,6 +1,6 @@
-// The MCP Streamable HTTP transport, as a counterpart to the stdio transport in
-// ./mcp.ts. Both feed the same pure `dispatch`, so the tool surface is identical
-// however a client connects.
+// The authoritative MCP Streamable HTTP transport. It executes `dispatch`
+// locally on the hosted backend; the stdio entry point is only a forwarding
+// client and never executes tools itself.
 //
 // This server is deliberately *sessionless*: `dispatch` keeps no per-client
 // state, so there is nothing to pin a session to. The spec makes `Mcp-Session-Id`
@@ -13,6 +13,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { dispatch, type JsonRpcRequest, type JsonRpcResponse } from "./mcp.ts";
+import {
+  decodeResidentialOffer,
+  RESIDENTIAL_OFFER_HEADER,
+  withResidentialOffer,
+} from "./residential.ts";
 
 /** Cap request bodies. The box this runs on is memory-tight and no legitimate
  *  MCP message is anywhere near this large. */
@@ -139,10 +144,23 @@ export async function handleMcpRequest(
   }
 
   const results: JsonRpcResponse[] = [];
-  for (const message of messages) {
-    const response = await dispatch(message);
-    if (response) results.push(response);
+  const rawOffer = req.headers[RESIDENTIAL_OFFER_HEADER];
+  if (Array.isArray(rawOffer)) {
+    rpcError(res, 400, -32600, "Invalid residential capability header");
+    return;
   }
+  const residentialOffer = decodeResidentialOffer(rawOffer);
+  if (rawOffer && !residentialOffer) {
+    rpcError(res, 400, -32600, "Invalid residential capability header");
+    return;
+  }
+
+  await withResidentialOffer(residentialOffer, async () => {
+    for (const message of messages) {
+      const response = await dispatch(message);
+      if (response) results.push(response);
+    }
+  });
 
   // Every message was a notification — nothing to say back.
   if (results.length === 0) {

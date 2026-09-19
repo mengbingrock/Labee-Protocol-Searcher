@@ -17,6 +17,31 @@ link only.
 It works as a connector for ChatGPT, Claude, Codex, and other assistants that
 support MCP.
 
+## Runtime architecture
+
+Labee has one execution path and two transports:
+
+```text
+remote MCP client ──────────────────────────────┐
+                                               ▼
+local MCP client → stdio forwarding bridge → https://labee.online/mcp
+                     │                         │
+                     └─ encrypted exit agent ─┴→ AWS Browserless → publisher
+```
+
+The hosted Streamable HTTP service is authoritative: it owns every tool,
+search, fetch, cache, and fallback. The default local stdio executable is only
+an authenticated JSON-RPC bridge to that service; it does not execute a second
+copy of the MCP tools locally.
+
+When explicitly enabled, the same stdio process can keep an outbound encrypted
+residential-exit connection registered with Browserless. It advertises that
+capability only on forwarded `search` and `fetch` calls. Advertising is not
+usage: ordinary publisher traffic still follows its configured datacenter
+route, and the residential connection carries bytes only for a publisher that
+prefers it or after a datacenter render fails or exposes a subscription-only
+preview. No residential-agent secret is sent in the MCP request.
+
 ## Install the Codex plugin
 
 The public Labee marketplace packages the MCP server with a skill that prefers
@@ -135,11 +160,13 @@ expected subscription boundary is not presented as a technical error:
 
 ### Network context
 
-Because entitlement is decided by IP, Labee checks once at startup whether it is
-running on an academic network and prints what it found. On such a network
-`fetch` will try the publisher’s own copy of a paywalled DOI before falling back
-to the abstract. Set `PROTOCOLS_ENTITLED_FETCH=off` to never attempt it, or
-`PROTOCOLS_NETWORK_DETECT=off` to skip the check altogether.
+Because entitlement is decided by IP, the process that executes tools checks
+once at startup whether it is running on an academic network and prints what it
+found. For the hosted path that is the remote service, not the local stdio
+bridge. A separately enabled residential exit can expose access already
+attached to the user's network during the publisher retry described above.
+Set `PROTOCOLS_ENTITLED_FETCH=off` on a self-hosted backend to never attempt its
+own entitled route, or `PROTOCOLS_NETWORK_DETECT=off` to skip that backend check.
 
 Labee still bypasses no access control. The entitled path uses only the access
 your network already has, and it is labelled distinctly precisely so that
@@ -157,11 +184,13 @@ access controls. The self-hosted Browserless operator may configure challenge
 solving for public anti-bot pages; that does not authenticate, create an
 entitlement, or change the content's licence.
 
-### Optional default-profile browser for local Labee
+### Optional default-profile browser for a self-hosted backend or one-shot CLI
 
 Some public supplier pages, including NEB pages, reject server-style requests
-but work in an ordinary visible browser. A locally run Labee instance can use
-`browser: default` on `fetch` (CLI: `--browser default`). The
+but work in an ordinary visible browser. A backend intentionally self-hosted on
+the user's Mac can use `browser: default` on `fetch`; the one-shot CLI can use
+`--browser default`. The default stdio bridge cannot: it forwards that tool call
+to the remote backend. The
 `browser_launch`, `browser_status`, and `browser_close` MCP tools provide an
 explicit one-click lifecycle.
 
@@ -236,11 +265,13 @@ token nothing changes.
 ### Optional residential exit for the remote browser
 
 The remote browser above calls from its own datacenter, which is exactly why it
-is barred from entitled retrieval and why vendor sites are hostile to it. This
-option removes that constraint by turning the relationship around: the MCP layer
-running on **your** PC registers itself with a self-hosted browserless server as
-a residential exit, and the server routes your browser traffic back out through
-your connection. The remote browser then calls from the same network you are on.
+cannot prove access attached to the user's network and why vendor sites can be
+hostile to it. This option turns the relationship around: the stdio forwarding
+bridge running on **your** PC registers itself with the self-hosted Browserless
+server as a residential exit. It also attaches bounded, non-secret capability
+metadata to relevant calls so the remote MCP process can select that exit. The
+remote browser can then make only the necessary publisher request from the same
+network you are on.
 
 ```bash
 PROTOCOLS_RESIDENTIAL_PROXY=on
@@ -264,16 +295,18 @@ Four things to know before enabling it:
   The hosted browserless.io service has no such feature.
 - Residential calls go to `/content`; `/unblock` is hosted-only and 404s on a
   self-hosted server.
-- Stdio mode and one-shot `--query`/`--fetch` register. Under `--http` this process *is* the server, and a
-  server offering itself as a residential exit would be a datacenter IP wearing
-  the wrong label.
+- Stdio mode and one-shot `--query`/`--fetch` register. Stdio still forwards all
+  MCP JSON-RPC to the remote HTTP service; only the encrypted exit agent runs
+  locally. Under `--http` this process *is* the server, and a server offering
+  itself as a residential exit would be a datacenter IP wearing the wrong label.
 - Consent is a separate variable from enabling, deliberately. Other people's
   browser traffic will exit from your IP address.
 
-Entitled retrieval still does not use the remote browser, even with a
-residential exit registered. Making `entitled-full-text` depend on the exit
-genuinely being the subscribing network is a provenance decision, not a
-plumbing one, and it has not been taken here.
+The datacenter browser is never treated as entitled. If a datacenter render is
+only a subscription preview and the registered residential exit exposes the
+protocol body, Labee reports `entitled-full-text` and identifies the residential
+network as the source. If that network has no subscription, the result remains
+`abstract-only` with `_reason: subscription-required_`.
 
 For NEB, `search` also accepts `browser: default`. Labee opens each returned
 NEB page in its dedicated window and retains the rendered content HTML. A following
@@ -367,8 +400,17 @@ README, chat message, screenshot, or public configuration file.
 ### Claude, Codex, and other MCP clients
 
 Use the same hosted MCP address and bearer token in any client that supports a
-remote Streamable HTTP MCP connection. Teams that prefer to operate their own
-instance can use the self-hosting notes below.
+remote Streamable HTTP MCP connection. For clients that require a local stdio
+command, run the package as the bridge and provide the remote bearer token:
+
+```sh
+PROTOCOLS_REMOTE_MCP_TOKEN=<token> npx -y @mengbingrock/labee-protocol-searcher
+```
+
+The URL defaults to `https://labee.online/mcp`; override it with
+`PROTOCOLS_REMOTE_MCP_URL` for a self-hosted backend. `MCP_BEARER_TOKEN` and
+`PROTOCOLS_MCP_TOKEN` remain accepted token aliases. Teams that prefer to
+operate their own backend can use the self-hosting notes below.
 
 ## What Labee is—and is not
 
@@ -506,8 +548,9 @@ npm install
 npm run build
 ```
 
-The built server is `dist/index.mjs`. Run it as a local MCP process or as a
-loopback HTTP service behind your own authenticated HTTPS proxy.
+The built executable is `dist/index.mjs`. With no arguments it is the local
+stdio forwarding bridge. Run it with `--http` to operate the authoritative
+backend as a loopback HTTP service behind your own authenticated HTTPS proxy.
 
 You can also use the published package:
 
@@ -546,7 +589,7 @@ npm run health
 | Content retrieval | `src/fetch.ts`, `src/fulltext.ts`, `src/extract.ts` |
 | AWS Browserless and residential retry | `src/browserless.ts`, `src/residential.ts`, `src/residential/` |
 | Browser-assisted retrieval | `src/agent/` |
-| MCP and hosted transport | `src/mcp.ts`, `src/http.ts` |
+| MCP implementation and transports | `src/mcp.ts`, `src/http.ts`, `src/stdio-proxy.ts` |
 | Daily reliability checks | `scripts/health-check.mjs`, `.github/workflows/health.yml` |
 | Network context and entitlement | `src/network-context.ts` |
 | Cookie jar (identity-provider handshakes) | `src/cookies.ts` |

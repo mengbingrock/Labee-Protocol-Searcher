@@ -1,10 +1,6 @@
-// A dependency-free MCP server over the stdio transport.
-//
-// MCP's stdio transport is newline-delimited JSON-RPC 2.0: one message per
-// line on stdin, one response per line on stdout, and absolutely nothing else
-// on stdout (logs go to stderr). We implement just the methods a tool-only
-// server needs: initialize, tools/list, tools/call, ping. See
-// https://modelcontextprotocol.io/specification for the wire format.
+// MCP method implementation for the remote Streamable HTTP service. The local
+// stdio entry point intentionally does not call this dispatcher; it is a thin
+// proxy in ./stdio-proxy.ts and forwards every message to the remote service.
 
 import { readFileSync } from "node:fs";
 import { search, renderSearch } from "./search.ts";
@@ -63,7 +59,7 @@ const SERVER_INSTRUCTIONS =
   "explicit fetch(browser=chrome) returns a chromeBrowserTask. Reuse the connected Chrome session without " +
   "reading cookies, verify the DOI/title, capture article HTML or downloaded-PDF text, and call " +
   "chrome_fetch_commit. Treat that capture as entitled content, not open-access content.";
-/** Search-to-fetch browser handoff for the lifetime of one local MCP process. */
+/** Search-to-fetch browser handoff for the lifetime of the authoritative MCP process. */
 const sameProfileBrowserById = new Map<string, "cdp" | "default">();
 
 export interface JsonRpcRequest {
@@ -534,33 +530,4 @@ export async function dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse | n
       if (req.id === undefined || req.id === null) return null;
       return { jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${req.method}` } };
   }
-}
-
-/** Start the stdio server. Resolves when stdin closes. */
-export function runMcpServer(): Promise<void> {
-  return new Promise((resolve) => {
-    process.stderr.write("[labee-protocol-searcher] MCP server ready on stdio\n");
-    let buf = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk: string) => {
-      buf += chunk;
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line) continue;
-        let req: JsonRpcRequest;
-        try {
-          req = JSON.parse(line);
-        } catch {
-          continue; // ignore unparseable lines
-        }
-        void dispatch(req).then((res) => {
-          if (res) process.stdout.write(JSON.stringify(res) + "\n");
-        });
-      }
-    });
-    process.stdin.on("end", () => resolve());
-    process.stdin.on("close", () => resolve());
-  });
 }
