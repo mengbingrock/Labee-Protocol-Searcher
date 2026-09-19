@@ -190,7 +190,9 @@ export const TOOLS = [
       "`ids` to fetch a batch in one call (each returns its own row). Bare DOIs, PMIDs, PMCIDs, and " +
       "enzyme names also work. Every result ends with a `_status: …_` line (ok, entitled-full-text, " +
       "display-only-full-text, display-only-link, abstract-only, no-open-fulltext, oa-link, " +
-      "not-fetchable, not-found, bad-id).",
+      "not-fetchable, not-found, bad-id). A non-full-text result also includes `_reason: …_`; " +
+      "for example, `subscription-required` is an expected access limitation, while " +
+      "`technical-retrieval-failure` means the automated request actually failed.",
     inputSchema: {
       type: "object",
       properties: {

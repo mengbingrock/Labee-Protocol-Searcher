@@ -34,7 +34,25 @@ describe("fetchResource — scheme dispatch", () => {
   it("returns the link for a url id the site refuses", async () => {
     const out = await fetchResource("url:https://www.neb.com/x", { fetchImpl: refuses });
     expect(out).toContain("https://www.neb.com/x");
+    expect(out).toContain("_reason: technical-retrieval-failure_");
     expect(out).toContain("_status: not-fetchable_");
+  });
+
+  it("labels a publisher subscription preview as abstract-only, not a fetch error", async () => {
+    const preview = (async () =>
+      new Response(
+        "<html><body><article><h2>Abstract</h2><p>Protocol summary.</p>" +
+          "<p>This is a preview of subscription content, access via your institution</p>" +
+          "</article></body></html>",
+        { status: 200, headers: { "content-type": "text/html" } },
+      )) as unknown as typeof fetch;
+    const out = await fetchResource("url:https://www.nature.com/articles/example", {
+      fetchImpl: preview,
+    });
+    expect(out).toContain("expected access limitation, not a technical retrieval error");
+    expect(out).toContain("_reason: subscription-required_");
+    expect(out).toContain("_status: abstract-only_");
+    expect(out).not.toContain("_status: display-only-full-text_");
   });
 
   it("extracts the page text for a url id the site serves", async () => {
@@ -80,7 +98,9 @@ describe("fetchResource — status footers", () => {
   });
 
   it("tags an unrecognised id as bad-id", async () => {
-    expect(await fetchResource("this is not an id")).toContain("_status: bad-id_");
+    const out = await fetchResource("this is not an id");
+    expect(out).toContain("_reason: invalid-id_");
+    expect(out).toContain("_status: bad-id_");
   });
 });
 
@@ -98,6 +118,7 @@ describe("fetchResources — batch", () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
     const rows = await fetchResources(["10.1/x", "url:https://neb.com/x"], { fetchImpl: boom });
+    expect(rows[0]!.text).toContain("_reason: technical-execution-failure_");
     expect(rows[0]!.text).toContain("_status: error_"); // DOI fetch threw
     expect(rows[1]!.text).toContain("_status: not-fetchable_"); // url id degraded cleanly
   });

@@ -28,7 +28,8 @@
 //      for essentially every indexed article. A paywalled protocol still yields
 //      its aim, principle and timing — far more use than a bare link.
 // Every path ends with a machine-readable `_status: …_` footer so the agent can
-// branch on the outcome without parsing prose.
+// branch on the outcome without parsing prose. Non-full-text outcomes also use
+// `_reason: …_` to distinguish access/licensing limits from technical errors.
 //
 // Nothing here works around an access control. Step 2 uses only the access the
 // calling network already has and never claims it is open; NCBI itself
@@ -90,8 +91,8 @@ interface EpmcSearchResponse {
 }
 
 /** Machine-readable status footer the agent can branch on. */
-function withStatus(text: string, status: string): string {
-  return `${text}\n\n_status: ${status}_`;
+function withStatus(text: string, status: string, reason?: string): string {
+  return `${text}${reason ? `\n\n_reason: ${reason}_` : ""}\n\n_status: ${status}_`;
 }
 
 /**
@@ -626,6 +627,7 @@ export async function getProtocolFulltext(
     return withStatus(
       `No Europe PMC record found for "${trimmed}". It may not be indexed; try a DOI, PMID, or PMCID.`,
       "not-found",
+      "not-indexed",
     );
   }
 
@@ -844,6 +846,7 @@ export async function getProtocolFulltext(
         `at retrieval time._\n\n` +
         `${abstract}${pmcNote}${entitlementNote}\n\nRead the full protocol at: ${articleUrl(result, trimmed)}`,
       "abstract-only",
+      "no-public-full-text",
     );
   }
 
@@ -853,5 +856,6 @@ export async function getProtocolFulltext(
       `NCBI, Unpaywall or OpenAlex.` +
       `${pmcNote}\n\nRead it at: ${articleUrl(result, trimmed)}`,
     "no-open-fulltext",
+    "no-public-full-text",
   );
 }

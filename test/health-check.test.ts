@@ -11,6 +11,7 @@ import {
   parseHistory,
   renderBlock,
   renderHistory,
+  reasonOf,
   sourceProbeRows,
   probeGrade,
   spliceBlock,
@@ -33,6 +34,18 @@ describe("statusOf", () => {
 
   it("reports a missing footer rather than guessing", () => {
     expect(statusOf("Error: `id` is required.")).toBe("no-status");
+  });
+});
+
+describe("reasonOf", () => {
+  it("keeps access limitations separate from technical failures", () => {
+    expect(reasonOf("_reason: subscription-required_\n\n_status: abstract-only_")).toBe(
+      "subscription-required",
+    );
+    expect(reasonOf("_reason: technical-retrieval-failure_\n\n_status: not-fetchable_")).toBe(
+      "technical-retrieval-failure",
+    );
+    expect(reasonOf("body\n\n_status: ok_")).toBe("");
   });
 });
 
@@ -168,6 +181,29 @@ describe("renderBlock", () => {
     };
     expect(renderBlock(drifted)).toContain("Grade drift");
     expect(renderBlock(report)).not.toContain("Grade drift");
+  });
+
+  it("renders subscription limits as non-errors and technical failures explicitly", () => {
+    const outcomes = {
+      ...report,
+      sources: [
+        {
+          ...report.sources[0]!,
+          id: "nature-protocols",
+          fetchStatus: "abstract-only",
+          fetchReason: "subscription-required",
+        },
+        {
+          ...report.sources[0]!,
+          id: "bio-protocol",
+          fetchStatus: "not-fetchable",
+          fetchReason: "technical-retrieval-failure",
+        },
+      ],
+    };
+    const md = renderBlock(outcomes);
+    expect(md).toContain("`abstract-only` · subscription required (not an error)");
+    expect(md).toContain("`not-fetchable` · technical retrieval failure");
   });
 
   it("says so when the whole sweep failed, instead of printing an empty table", () => {

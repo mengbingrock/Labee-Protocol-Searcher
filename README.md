@@ -104,7 +104,13 @@ network asking — an institutional address may reach content a datacenter canno
 — so a claim like “verified full text” was only ever true for whoever measured
 it. Predictions are computed fresh for each search and shared with nobody.
 
-`fetch` then reports the outcome it actually got, as a machine-readable status:
+`fetch` reports the payload it actually got as a machine-readable `_status`.
+When full text is unavailable it also reports a separate `_reason`, so an
+expected subscription boundary is not presented as a technical error:
+
+- Access limitation: `_reason: subscription-required_` or `_reason: no-public-full-text_`.
+- Technical failure: `_reason: technical-retrieval-failure_` or `_reason: technical-execution-failure_`.
+- Input/index problem: `_reason: invalid-id_` or `_reason: not-indexed_`.
 
 | `fetch` status | What you received |
 | --- | --- |
@@ -113,8 +119,9 @@ it. Predictions are computed fresh for each search and shared with nobody.
 | `display-only-full-text` | Readable text from a public page without a detected redistribution licence (including PMC copies outside the Open Access Subset). Read it; don’t republish it. |
 | `display-only-link` | A free-to-read PMC copy exists, but its publisher has not licensed machine-readable redistribution; open the supplied PMC link in a browser. |
 | `oa-link` | No machine-readable text, but a legal open copy was found and linked. |
-| `abstract-only` | Only the abstract was retrieved; no public open full text was found at retrieval time. |
-| `not-found` / `not-fetchable` | Not indexed, or the site refused automated reading. |
+| `abstract-only` | Only the abstract or publisher preview was retrieved. Check `_reason`: `subscription-required` is an expected access limitation (not an error); `no-public-full-text` means the open repositories checked had no downloadable body. |
+| `not-found` | No matching indexed record was found (`_reason: not-indexed_`). |
+| `not-fetchable` | Automated retrieval failed or the site refused it (`_reason: technical-retrieval-failure_`). This is a technical failure, not evidence of a subscription requirement. |
 | `interaction-required` | Labee opened its dedicated Chrome window, but a human verification page still needs your attention; complete it and retry. |
 | `chrome-browser-required` | Native retrieval stopped short of full text and an explicitly authorized connected-Chrome capture task is ready for the Codex plugin. |
 

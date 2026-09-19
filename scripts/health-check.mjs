@@ -128,6 +128,12 @@ function statusOf(text) {
   return all.length > 0 ? all.at(-1)[1] : "no-status";
 }
 
+/** Why a non-full-text outcome occurred, kept separate from payload status. */
+function reasonOf(text) {
+  const all = [...text.matchAll(/_reason: ([a-z-]+)_/g)];
+  return all.length > 0 ? all.at(-1)[1] : "";
+}
+
 /**
  * Which retrieval tier answered, read off the `_Source:` line. Ordered most
  * specific first: an Unpaywall-recovered PMCID rendered from NCBI should be
@@ -236,6 +242,7 @@ async function probeDoiResults(results) {
     return {
       doi,
       status,
+      reason: stdout ? reasonOf(stdout) : "technical-execution-failure",
       content: contentOfStatus(status),
       checkedAt: new Date().toISOString(),
       source: result.source,
@@ -270,6 +277,7 @@ export function sourceProbeRows(declared, json) {
           bucket?.providers?.find((provider) => provider.id === "publisher-browserless")?.status ?? "",
         searchError: bucket?.error || (bucket ? "" : "source missing from search response"),
         fetchStatus: "",
+        fetchReason: "",
         tier: "",
         probedId: "",
       };
@@ -312,6 +320,7 @@ async function probeSources(declared) {
       const doiObservation = doiById.get(top.id.toLowerCase());
       if (doiObservation) {
         row.fetchStatus = doiObservation.status;
+        row.fetchReason = doiObservation.reason;
         row.tier = doiObservation.retrievalTier;
       } else {
         // Retry a hard refusal once: `not-fetchable` is what drives a drift
@@ -321,6 +330,7 @@ async function probeSources(declared) {
           (r) => !r.stdout || statusOf(r.stdout) === "not-fetchable",
         );
         row.fetchStatus = stdout ? statusOf(stdout) : `error: ${ferr}`;
+        row.fetchReason = stdout ? reasonOf(stdout) : "technical-execution-failure";
         row.tier = tierOf(stdout);
       }
     }
@@ -347,6 +357,7 @@ async function probeSources(declared) {
     publisherStatus: "",
     searchError: rbucket?.error || "",
     fetchStatus: "",
+    fetchReason: "",
     tier: "REBASE flat file",
     probedId: rtop?.id ?? "",
   };
@@ -356,6 +367,7 @@ async function probeSources(declared) {
       (r) => !r.stdout || statusOf(r.stdout) !== "ok",
     );
     rrow.fetchStatus = stdout ? statusOf(stdout) : "error";
+    rrow.fetchReason = stdout ? reasonOf(stdout) : "technical-execution-failure";
   }
   rrow.drift = driftOf(rrow);
   rows.push(rrow);
@@ -404,7 +416,16 @@ function searchRouteCell(row) {
 function fetchCell(row) {
   if (!row.fetchStatus) return `${NA} not probed`;
   const icon = FULL_TEXT_STATUSES.has(row.fetchStatus) ? OK : row.fetchStatus === "not-fetchable" ? BAD : WARN;
-  return `${icon} \`${row.fetchStatus}\`${row.tier ? ` · ${row.tier}` : ""}`;
+  const reasonLabels = {
+    "subscription-required": "subscription required (not an error)",
+    "no-public-full-text": "no public full text",
+    "technical-retrieval-failure": "technical retrieval failure",
+    "technical-execution-failure": "fetch process failed",
+    "not-indexed": "not indexed",
+    "invalid-id": "invalid identifier",
+  };
+  const reason = reasonLabels[row.fetchReason] ?? row.fetchReason;
+  return `${icon} \`${row.fetchStatus}\`${reason ? ` · ${reason}` : ""}${row.tier ? ` · ${row.tier}` : ""}`;
 }
 
 const GRADE_LABEL = { full: "✅ full", partial: "⚠️ partial", none: "❌ none" };
@@ -700,7 +721,7 @@ export function spliceBlock(readme, block) {
   return readme.slice(0, start + BEGIN.length) + "\n" + block + "\n" + readme.slice(end);
 }
 
-export { statusOf, tierOf, driftOf, renderBlock, renderHistory, normalizeDoi, contentOfStatus };
+export { statusOf, reasonOf, tierOf, driftOf, renderBlock, renderHistory, normalizeDoi, contentOfStatus };
 
 // Only run when invoked as a script, so the helpers above stay importable.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

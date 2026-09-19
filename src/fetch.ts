@@ -9,12 +9,16 @@
 // Bare ids with no scheme are inferred from their shape, so the model can pass a
 // raw DOI, accession, or enzyme name directly. `fetchResources` resolves a
 // batch concurrently, returning a per-id row so one bad id never sinks the rest.
-// Every result carries a machine-readable `_status: …_` footer.
+// Every result carries a machine-readable `_status: …_` footer. Outcomes that
+// stop short of full text also carry `_reason: …_`: status describes what was
+// returned, while reason distinguishes an expected access limitation from a
+// technical failure.
 
 import type { ProviderOptions } from "./providers/types.ts";
 import { findRestrictionEnzyme } from "./rebase.ts";
 import { getProtocolFulltext, type FulltextOptions } from "./fulltext.ts";
 import { extractOaContent } from "./extract.ts";
+import { getVendorForUrl } from "./vendors.ts";
 
 const PMCID = /^PMC\d+$/i;
 const PMID = /^\d+$/;
@@ -27,15 +31,26 @@ const SCHEME = /^([a-z][a-z0-9+.-]*):([\s\S]*)$/i;
 /** Fetch options: provider knobs plus the JATS `section` filter for full text. */
 export type FetchOptions = FulltextOptions;
 
-function withStatus(text: string, status: string): string {
-  return `${text}\n\n_status: ${status}_`;
+function withStatus(text: string, status: string, reason?: string): string {
+  return `${text}${reason ? `\n\n_reason: ${reason}_` : ""}\n\n_status: ${status}_`;
 }
 
 function notFetchable(url: string): string {
   return withStatus(
-    "This page can't be retrieved automatically — the site refused the request.\n\n" +
+    "This page couldn't be retrieved automatically because the request failed or the site " +
+      "refused automated reading. This is a technical retrieval failure, not evidence that " +
+      "a subscription is required.\n\n" +
       `Open it directly: ${url}`,
     "not-fetchable",
+    "technical-retrieval-failure",
+  );
+}
+
+/** Publisher copy that exposes an abstract/preview but gates the protocol body. */
+function isSubscriptionPreview(url: string, text: string): boolean {
+  if (getVendorForUrl(url)?.publisherFetch !== "abstract-only") return false;
+  return /(?:preview of subscription content|access (?:this article |the full (?:article|text) )?(?:through|via) your institution|institutional access|subscribe to (?:this journal|read)|buy this article|purchase (?:this|the) article|full (?:article|text) access)/i.test(
+    text,
   );
 }
 
@@ -52,6 +67,15 @@ async function fetchWebPage(url: string, opts: FetchOptions): Promise<string> {
   if (!/^https?:\/\//i.test(url)) return notFetchable(url);
   const extracted = await extractOaContent(url, opts, WEB_PAGE_MAX_CHARS);
   if (!extracted?.text?.trim()) return notFetchable(url);
+  if (isSubscriptionPreview(url, extracted.text)) {
+    return withStatus(
+      `_Source: ${url} (publisher abstract/preview; the protocol body requires institutional ` +
+        `or individual subscription access). This is an expected access limitation, not a ` +
+        `technical retrieval error._\n\n${extracted.text}`,
+      "abstract-only",
+      "subscription-required",
+    );
+  }
   // A vendor page carries no licence signal either way, but how it was obtained
   // still differs: content a plain request returned is `ok`, while content that
   // needed a remote browser gets the same label the local browser adapters use.
@@ -100,6 +124,7 @@ export async function fetchResource(id: string, opts: FetchOptions = {}): Promis
       "(`rebase:…`, `doi:…`, `pmid:…`, `pmcid:…`, `url:…`) " +
       "or a bare DOI / PMID / PMCID / enzyme name.",
     "bad-id",
+    "invalid-id",
   );
 }
 
@@ -126,7 +151,14 @@ export async function fetchResources(ids: readonly string[], opts: FetchOptions 
         out[i] = { id, text: await fetchResource(id, opts) };
       } catch (err) {
         const message = err instanceof Error ? err.message : "fetch failed";
-        out[i] = { id, text: withStatus(`Error fetching \`${id}\`: ${message}`, "error") };
+        out[i] = {
+          id,
+          text: withStatus(
+            `Error fetching \`${id}\`: ${message}`,
+            "error",
+            "technical-execution-failure",
+          ),
+        };
       }
     }
   });
