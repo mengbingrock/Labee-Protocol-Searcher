@@ -46,6 +46,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_HTML_BYTES = 8 * 1024 * 1024;
 const RESIDENTIAL_RETRY_DELAY_MS = 1_500;
+const SEARCH_SELECTOR_TIMEOUT_MS = 5_000;
 
 export interface BrowserlessConfig {
   endpoint: string;
@@ -71,6 +72,16 @@ export interface BrowserlessSearchInteraction {
   startUrl: string;
   inputSelector?: string;
   submitSelector?: string;
+}
+
+interface BrowserlessScrapeAttribute {
+  name: string;
+  value: string;
+}
+
+interface BrowserlessScrapeResult {
+  attributes?: BrowserlessScrapeAttribute[];
+  text?: string;
 }
 
 /**
@@ -343,6 +354,109 @@ function searchPageFromHtml(html: string, requestedUrl: string): BrowserlessSear
     bodyText,
     links,
   };
+}
+
+/**
+ * Extract live result anchors through the self-hosted `/scrape` route.
+ *
+ * This is intentionally separate from `/function`: scrape enables the fork's
+ * configured public-page challenge solver and stealth launch mode, while still
+ * returning structured DOM attributes. NEB's Coveo cards require exactly this
+ * combination—the cards are visible in a screenshot but absent from the HTML
+ * serialized by `/content`.
+ */
+export async function scrapeSearchWithBrowserless(
+  searchUrl: string,
+  selector: string,
+  doFetch: typeof fetch,
+  cfg: BrowserlessConfig,
+  residential?: ResidentialSelector | null,
+): Promise<BrowserlessSearchPage | null> {
+  let endpoint: URL;
+  try {
+    endpoint = assertBrowserlessEndpoint(cfg.endpoint);
+  } catch {
+    return null;
+  }
+  if (endpointFlavor(endpoint) !== "self-hosted") return null;
+
+  const params = new URLSearchParams({ token: cfg.token, timeout: String(MAX_TIMEOUT_MS) });
+  if (residential) {
+    params.set("residentialProxy", "true");
+    params.set("residentialProxyCountry", residential.country);
+    if (residential.region) params.set("residentialProxyRegion", residential.region);
+    if (residential.city) params.set("residentialProxyCity", residential.city);
+  }
+
+  const body = JSON.stringify({
+    url: searchUrl,
+    gotoOptions: { waitUntil: "domcontentloaded", timeout: MAX_TIMEOUT_MS },
+    waitForTimeout: DEFAULT_TIMEOUT_MS,
+    solveCaptchas: true,
+    // The page already gets a 30-second settle. A missing selector after that
+    // is a failed publisher search, not a reason to hold the datacenter browser
+    // for another two minutes before trying the residential route.
+    elements: [{ selector, timeout: SEARCH_SELECTOR_TIMEOUT_MS }],
+  });
+  const attempts = residential ? 2 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MAX_TIMEOUT_MS);
+    try {
+      const response = await doFetch(`${endpoint.origin}/scrape?${params.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        if (attempt < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, RESIDENTIAL_RETRY_DELAY_MS));
+          continue;
+        }
+        return null;
+      }
+      const raw = await response.text();
+      if (!raw.trim() || raw.length > MAX_HTML_BYTES) return null;
+      const parsed = JSON.parse(raw) as {
+        data?: Array<{ results?: BrowserlessScrapeResult[]; selector?: string }>;
+      };
+      const results = parsed.data?.find((row) => row.selector === selector)?.results;
+      if (!Array.isArray(results)) return null;
+
+      const links: BrowserlessSearchLink[] = [];
+      for (const result of results) {
+        const attributes = Array.isArray(result.attributes) ? result.attributes : [];
+        const href = attributes.find((attribute) => attribute.name.toLowerCase() === "href")?.value;
+        if (!href) continue;
+        let absolute: string;
+        try {
+          absolute = new URL(href, searchUrl).toString();
+        } catch {
+          continue;
+        }
+        const className = attributes.find(
+          (attribute) => attribute.name.toLowerCase() === "class",
+        )?.value;
+        links.push({
+          href: absolute,
+          text: typeof result.text === "string" ? result.text.replace(/\s+/g, " ").trim() : "",
+          snippet: "",
+          ...(className ? { className } : {}),
+        });
+      }
+      return { title: "", url: searchUrl, bodyText: "", links };
+    } catch {
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, RESIDENTIAL_RETRY_DELAY_MS));
+        continue;
+      }
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
 }
 
 /** Render a publisher search UI and return its populated links. */

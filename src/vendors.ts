@@ -79,6 +79,10 @@ export interface Vendor {
   publisherResult: RegExp;
   /** Optional result-link class needed to exclude same-host navigation links. */
   publisherResultClass?: RegExp;
+  /** CSS selector extracted through Browserless `/scrape` with challenge solving. */
+  publisherScrapeSelector?: string;
+  /** Prefer an available local residential exit for this publisher's search. */
+  publisherResidentialFirst?: boolean;
   /** Publishers whose current search UI must be submitted interactively. */
   interactiveSearch?: InteractivePublisherSearch;
   /** Result links are rendered inside open shadow roots (currently IDT). */
@@ -235,6 +239,11 @@ export const VENDORS: Vendor[] = [
     searchUrl: (q) => `https://www.neb.com/en-us/search#q=${enc(q)}`,
     publisherResult: /^https?:\/\/(?:www\.)?neb\.com\/en-us\/(?:products|protocols)\//i,
     publisherResultClass: /\bCoveoResultLink\b/i,
+    // Coveo's live result anchors are visible in Chromium but are not included
+    // in `/content`'s serialized HTML. `/scrape` reads the live DOM and, unlike
+    // `/function`, supports the server's public-page challenge solver.
+    publisherScrapeSelector: ".CoveoResultLink",
+    publisherResidentialFirst: true,
   },
   {
     id: "bio-rad",

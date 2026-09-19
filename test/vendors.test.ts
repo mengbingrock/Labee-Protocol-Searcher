@@ -39,6 +39,8 @@ describe("vendor registry", () => {
     expect(getVendor("promega")!.searchUrl("PCR purification")).toContain("/results#q=");
     expect(getVendor("idt")!.searchUrl("PCR purification")).toContain("/page/search#q=");
     expect(getVendor("neb")!.searchUrl("PCR purification")).toContain("/search#q=");
+    expect(getVendor("neb")!.publisherScrapeSelector).toBe(".CoveoResultLink");
+    expect(getVendor("neb")!.publisherResidentialFirst).toBe(true);
   });
 
   it("marks the two protocol journals as journal-kind with Crossref metadata", () => {

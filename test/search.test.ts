@@ -29,15 +29,39 @@ describe("searchProtocols", () => {
     process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
     process.env.BRAVE_API_KEY = "k";
     const seen: string[] = [];
-    const fakeFetch = (async (url: string) => {
+    let scrapeBody: Record<string, unknown> = {};
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
       seen.push(url);
-      if (url.includes("/content?")) {
-        return new Response(`
-          <html><head><title>Search Box | NEB</title></head><body>
-          <a href="https://www.neb.com/en-us/about">About</a>
-          <a class="CoveoResultLink" href="https://www.neb.com/en-us/products/e7435-kit">Promotion</a>
-          <a class="CoveoResultLink" href="https://www.neb.com/en-us/products/e7435-kit">NEBNext PCR-free kit</a>
-          </body></html>`, { status: 200 });
+      if (url.includes("/scrape?")) {
+        scrapeBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
+          data: [{
+            selector: ".CoveoResultLink",
+            results: [
+              {
+                text: "NEBNext PCR-free kit",
+                attributes: [
+                  { name: "class", value: "CoveoResultLink pardotTrackClick" },
+                  { name: "href", value: "/en-us/products/e7435-kit" },
+                ],
+              },
+              {
+                text: "Protocol",
+                attributes: [
+                  { name: "class", value: "CoveoResultLink pardotTrackClick" },
+                  { name: "href", value: "/en-us/products/e7435-kit#Protocols--Manuals-and-Usage" },
+                ],
+              },
+              {
+                text: "Price",
+                attributes: [
+                  { name: "class", value: "CoveoResultLink pardotTrackClick" },
+                  { name: "href", value: "/en-us/products/e7435-kit" },
+                ],
+              },
+            ],
+          }],
+        }), { status: 200 });
       }
       throw new Error(`fallback should not run: ${url}`);
     }) as unknown as typeof fetch;
@@ -47,9 +71,18 @@ describe("searchProtocols", () => {
     });
     expect(resp.vendors[0]).toMatchObject({
       source: "publisher-browserless",
-      results: [{ title: "NEBNext PCR-free kit" }],
+      results: [{
+        title: "NEBNext PCR-free kit",
+        url: "https://www.neb.com/en-us/products/e7435-kit",
+      }],
     });
-    expect(seen[0]).toContain("/content?");
+    expect(resp.vendors[0]!.results).toHaveLength(1);
+    expect(seen[0]).toContain("/scrape?");
+    expect(scrapeBody).toMatchObject({
+      solveCaptchas: true,
+      waitForTimeout: 30_000,
+      elements: [{ selector: ".CoveoResultLink" }],
+    });
     expect(seen.some((url) => url.includes("api.search.brave.com"))).toBe(false);
   });
 

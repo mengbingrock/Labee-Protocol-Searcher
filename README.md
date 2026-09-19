@@ -67,9 +67,10 @@ For every protocol journal and supplier, Labee follows the same production
 order:
 
 1. Render the publisher's own search page through the self-hosted AWS
-   Browserless service. Ordinary pages use `/content`; `/function` is reserved
-   for publishers that require form interaction and for IDT's Shadow DOM
-   results.
+   Browserless service. Ordinary pages use `/content`; NEB uses `/scrape` with
+   challenge solving and prefers an available local residential exit to read
+   its live Coveo result anchors; `/function` is reserved for publishers that
+   require form interaction and for IDT's Shadow DOM results.
 2. Wait up to 30 seconds for client-rendered results, reject navigation links,
    challenge pages, and soft 404s, and keep only URLs matching that publisher's
    known result shape.
@@ -173,23 +174,31 @@ route**. It renders each publisher's own search page first; scholarly or
 site-scoped web databases run only when that publisher search fails. Publisher
 result pages also use Browserless first, with ordinary HTTP as fallback.
 
-The self-hosted AWS fork uses `/content` for normal pages and `/function` only
-when it must submit an interactive search form or traverse open Shadow DOM. It
-allows a 30-second render settle window and requests the server's configured
+The self-hosted AWS fork uses `/content` for normal pages, `/scrape` for NEB's
+live Coveo anchors, and `/function` only when it must submit an interactive
+search form or traverse open Shadow DOM. The `/content` and `/scrape` routes
+allow a 30-second render settle window and request the server's configured
 public-page challenge solver. Hosted browserless.io is a different codebase:
 its `/unblock` route remains supported for page retrieval, but it is not used
 for publisher search and cannot use the residential-exit extension.
 
 Observed reach changes over time, so the daily record is authoritative. In the
-2026-09-18 production run, first-party AWS Browserless search supplied 9 of 15
-publisher sources. STAR Protocols, JoVE, Current Protocols, NEB, Sigma-Aldrich,
-and EMD Millipore used their configured database/web fallbacks. Even though
+2026-09-18 production run—before NEB moved to `/scrape`—first-party AWS
+Browserless search supplied 9 of 15 publisher sources. STAR Protocols, JoVE,
+Current Protocols, NEB, Sigma-Aldrich, and EMD Millipore used their configured
+database/web fallbacks. Even though
 Sigma-Aldrich and EMD search fell back, Browserless successfully fetched the
 selected product pages; the report flags that as grade drift rather than
 silently rewriting a long-term reliability claim from one observation.
 
 NEB PDF manuals under `/-/media/` remain directly fetchable and are listed
 ahead of equivalent HTML pages when a fallback web search finds both.
+
+The post-change live verification on 2026-09-18 used AWS Browserless
+`/scrape`, headless Chromium, challenge solving, and the local residential
+exit. It returned three canonical NEB products in 36.2 seconds with route
+`publisher-browserless-residential`; fetching the top product through
+`/content` returned 16,378 characters as `display-only-full-text`.
 
 Two limits are deliberate. Results are labelled `display-only-full-text` rather
 than `ok`, because a page that needed a remote browser is not the same evidence

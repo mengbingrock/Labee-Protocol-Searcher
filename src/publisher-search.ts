@@ -1,5 +1,6 @@
 import {
   browserlessConfig,
+  scrapeSearchWithBrowserless,
   searchWithBrowserless,
   type BrowserlessSearchPage,
 } from "./browserless.ts";
@@ -21,8 +22,21 @@ const CHALLENGE =
 function titleScore(title: string): number {
   const text = title.trim();
   if (!text) return -1_000;
-  const generic = /^(promotion|view|learn more|read more|details|buy|shop|pdf|html)$/i.test(text);
+  const generic =
+    /^(promotion|view|learn more|read more|details|buy|shop|pdf|html|protocol|sds|price|specifications?(?:\s*&\s*change notifications)?|publications?)$/i.test(
+      text,
+    );
   return Math.min(text.length, 200) - (generic ? 500 : 0);
+}
+
+function canonicalResultUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return raw;
+  }
 }
 
 function resultsFromPage(vendor: Vendor, page: BrowserlessSearchPage, limit: number): RawResult[] {
@@ -31,16 +45,17 @@ function resultsFromPage(vendor: Vendor, page: BrowserlessSearchPage, limit: num
   for (const link of page.links) {
     if (!link.text.trim() || !vendor.publisherResult.test(link.href)) continue;
     if (vendor.publisherResultClass && !vendor.publisherResultClass.test(link.className ?? "")) continue;
+    const url = canonicalResultUrl(link.href);
     const snippet = link.snippet.trim();
     const candidate: RawResult = {
       title: link.text.trim().slice(0, 500),
-      url: link.href,
+      url,
       snippet: snippet === link.text.trim() ? "" : snippet.slice(0, 700),
       discoveredBy: ["publisher-browserless"],
     };
-    const current = byUrl.get(link.href);
-    if (!current) byUrl.set(link.href, candidate);
-    else if (titleScore(candidate.title) > titleScore(current.title)) byUrl.set(link.href, candidate);
+    const current = byUrl.get(url);
+    if (!current) byUrl.set(url, candidate);
+    else if (titleScore(candidate.title) > titleScore(current.title)) byUrl.set(url, candidate);
   }
   return [...byUrl.values()].slice(0, limit);
 }
@@ -77,14 +92,49 @@ export async function searchPublisher(
   }
 
   const doFetch = opts.fetchImpl ?? fetch;
-  const direct = await searchWithBrowserless(
-    searchUrl,
-    query,
-    doFetch,
-    cfg,
-    vendor.interactiveSearch,
-    vendor.shadowSearch,
-  );
+  const runPublisherSearch = (residential?: ReturnType<typeof residentialSelectorFor>) =>
+    vendor.publisherScrapeSelector
+      ? scrapeSearchWithBrowserless(
+          searchUrl,
+          vendor.publisherScrapeSelector,
+          doFetch,
+          cfg,
+          residential,
+        )
+      : searchWithBrowserless(
+          searchUrl,
+          query,
+          doFetch,
+          cfg,
+          vendor.interactiveSearch,
+          vendor.shadowSearch,
+          residential,
+        );
+
+  // NEB's Coveo UI is known to render through the local exit and known to be
+  // unreliable from the AWS address. Avoid paying for a doomed datacenter
+  // attempt when an explicitly enabled residential agent is already present.
+  let residentialSelector: ReturnType<typeof residentialSelectorFor> = null;
+  let residentialAttempted = false;
+  if (vendor.publisherResidentialFirst) {
+    await awaitResidentialReady(4_000);
+    residentialSelector = residentialSelectorFor(entryUrl);
+    if (residentialSelector) {
+      residentialAttempted = true;
+      const residential = await runPublisherSearch(residentialSelector);
+      const residentialResults = residential ? resultsFromPage(vendor, residential, limit) : [];
+      if (residentialResults.length > 0) {
+        return {
+          results: residentialResults,
+          source: "publisher-browserless-residential",
+          status: "ok",
+          elapsedMs: Date.now() - started,
+        };
+      }
+    }
+  }
+
+  const direct = await runPublisherSearch();
   const directResults = direct ? resultsFromPage(vendor, direct, limit) : [];
   if (directResults.length > 0) {
     return {
@@ -95,21 +145,16 @@ export async function searchPublisher(
     };
   }
 
-  // Only a failed/empty datacenter search is allowed to use the caller's local
-  // exit. The agent is started by stdio/CLI setup; this bounded wait covers its
-  // asynchronous registration without making publisher search depend on it.
-  await awaitResidentialReady(4_000);
-  const selector = residentialSelectorFor(entryUrl);
+  // Sources that did not already prefer the local exit get a residential retry
+  // only after an empty datacenter search. The agent is started by stdio/CLI
+  // setup; this bounded wait covers its asynchronous registration without
+  // making publisher search depend on it.
+  if (!residentialAttempted) await awaitResidentialReady(4_000);
+  const selector = residentialAttempted
+    ? null
+    : (residentialSelector ?? residentialSelectorFor(entryUrl));
   if (selector) {
-    const residential = await searchWithBrowserless(
-      searchUrl,
-      query,
-      doFetch,
-      cfg,
-      vendor.interactiveSearch,
-      vendor.shadowSearch,
-      selector,
-    );
+    const residential = await runPublisherSearch(selector);
     const residentialResults = residential ? resultsFromPage(vendor, residential, limit) : [];
     if (residentialResults.length > 0) {
       return {
