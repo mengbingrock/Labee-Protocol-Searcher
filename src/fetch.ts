@@ -16,7 +16,12 @@
 
 import type { ProviderOptions } from "./providers/types.ts";
 import { findRestrictionEnzyme } from "./rebase.ts";
-import { getProtocolFulltext, type FulltextOptions } from "./fulltext.ts";
+import {
+  bioProtocolDoiFromUrl,
+  directPdfUrl,
+  getProtocolFulltext,
+  type FulltextOptions,
+} from "./fulltext.ts";
 import { extractOaContent } from "./extract.ts";
 import { getVendorForUrl } from "./vendors.ts";
 
@@ -65,6 +70,23 @@ const WEB_PAGE_MAX_CHARS = 40_000;
  */
 async function fetchWebPage(url: string, opts: FetchOptions): Promise<string> {
   if (!/^https?:\/\//i.test(url)) return notFetchable(url);
+
+  // Bio-protocol's article HTML can trip SafeLine while the publisher's
+  // openly licensed PDF is served directly. Publisher search returns the
+  // article URL, so recover its deterministic DOI/PDF before touching HTML.
+  // Keep the normal page path as a fallback for malformed or missing PDFs.
+  const bioProtocolDoi = bioProtocolDoiFromUrl(url);
+  const bioProtocolPdf = directPdfUrl(bioProtocolDoi ?? undefined);
+  if (bioProtocolPdf) {
+    const pdf = await extractOaContent(bioProtocolPdf, opts, WEB_PAGE_MAX_CHARS);
+    if (pdf?.format === "pdf" && pdf.text.trim()) {
+      return withStatus(
+        `_Source: publisher open-access PDF (${bioProtocolPdf})._\n\n${pdf.text}`,
+        "ok",
+      );
+    }
+  }
+
   const extracted = await extractOaContent(url, opts, WEB_PAGE_MAX_CHARS);
   if (!extracted?.text?.trim()) return notFetchable(url);
   if (isSubscriptionPreview(url, extracted.text)) {

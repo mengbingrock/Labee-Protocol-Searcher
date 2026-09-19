@@ -161,6 +161,26 @@ export function directPdfUrl(doi: string | undefined): string | null {
   return null;
 }
 
+/**
+ * Recover the canonical DOI from a Bio-protocol article URL without requesting
+ * its SafeLine-protected HTML page. Bio-protocol uses the same numeric article
+ * id in its DOI and public PDF URL.
+ */
+export function bioProtocolDoiFromUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    if (!["bio-protocol.org", "www.bio-protocol.org", "en.bio-protocol.org"].includes(host)) {
+      return null;
+    }
+    if (!/^\/(?:en\/)?bpdetail\/?$/i.test(url.pathname)) return null;
+    const id = url.searchParams.get("id")?.trim();
+    return id && /^\d+$/.test(id) ? `10.21769/BioProtoc.${id}` : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Build the Europe PMC search query that best resolves a raw identifier. */
 function resolveQuery(id: string): string {
   const s = id.trim();
@@ -614,6 +634,25 @@ export async function getProtocolFulltext(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const section = opts.section;
 
+  // --- Step 0: a publisher-native open PDF derivable from the input DOI. ---
+  // Bio-protocol is the current case. Trying this before bibliographic APIs
+  // also covers newly published articles Europe PMC has not indexed yet.
+  const directFromInput = directPdfUrl(trimmed);
+  if (directFromInput) {
+    const extracted = await extractOaContent(
+      directFromInput,
+      { fetchImpl: doFetch, timeoutMs },
+      MAX_CHARS,
+    );
+    if (extracted?.format === "pdf" && extracted.text.trim()) {
+      return withStatus(
+        `# ${trimmed.replace(/^doi:/i, "")}\n\n` +
+          `_Source: publisher open-access PDF (${directFromInput})._\n\n${extracted.text}`,
+        "ok",
+      );
+    }
+  }
+
   // --- Step 1: resolve to a Europe PMC record (→ PMCID / DOI / abstract). ---
   // `core` rather than `lite`: same single request, but it carries the abstract
   // and MeSH terms that the last tier falls back on.
@@ -719,7 +758,7 @@ export async function getProtocolFulltext(
   // native open copy: better licensed than the display-only PMC route below, and
   // it sidesteps an HTML page that may be gated without touching that gate.
   const direct = directPdfUrl(doi);
-  if (direct) {
+  if (direct && direct !== directFromInput) {
     const extracted = await extractOaContent(direct, { fetchImpl: doFetch, timeoutMs }, MAX_CHARS);
     // The endpoint answers a bad id with HTTP 200 and an HTML landing page rather
     // than a 404, so status is not a usable signal — require an actual parsed PDF.

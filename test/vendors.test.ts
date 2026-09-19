@@ -73,6 +73,7 @@ describe("fetchability grading", () => {
       expect(getVendor(id)!.fetchability, id).toBe("none");
     }
     expect(getVendor("neb")!.fetchability).toBe("full");
+    expect(getVendor("bio-protocol")!.fetchability).toBe("full");
     expect(getVendor("nature-protocols")!.publisherFetch).toBe("abstract-only");
     expect(getVendor("current-protocols")!.publisherFetch).toBe("abstract-only");
     expect(getVendor("protocols-io")!.publisherFetch).toBe("full");

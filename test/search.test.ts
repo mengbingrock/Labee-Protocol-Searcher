@@ -259,6 +259,30 @@ describe("result fetchability", () => {
     expect(out.results[0]!.fetchable).toBe("full");
   });
 
+  it("turns a Bio-protocol publisher URL into the DOI that reaches its public PDF", async () => {
+    delete process.env.BROWSERLESS_TOKEN;
+    process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
+    const body = JSON.stringify({
+      message: {
+        items: [{
+          title: ["PCR cleanup"],
+          URL: "https://bio-protocol.org/en/bpdetail?id=5775&type=0",
+        }],
+      },
+    });
+    const f = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const out = await search("PCR cleanup", {
+      sources: ["bio-protocol"],
+      providerOpts: { fetchImpl: f },
+    });
+
+    expect(out.results[0]).toMatchObject({
+      id: "doi:10.21769/BioProtoc.5775",
+      source: "bio-protocol",
+      fetchable: "full",
+    });
+  });
+
   it("promotes a DOI to fetchable on live open-access signals from the backends", async () => {
     process.env.PROTOCOLS_JOURNAL_PROVIDERS = "crossref";
     const body = JSON.stringify({

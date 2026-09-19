@@ -1,7 +1,14 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { directPdfUrl, displayOnlyPdfUrl, getProtocolFulltext, pmcidFromUrl } from "../src/fulltext.ts";
+import {
+  bioProtocolDoiFromUrl,
+  directPdfUrl,
+  displayOnlyPdfUrl,
+  getProtocolFulltext,
+  pmcidFromUrl,
+} from "../src/fulltext.ts";
 import { resetEntitlementCache } from "../src/entitlement.ts";
 import { detectNetworkContext, resetNetworkContext } from "../src/network-context.ts";
+import { minimalPdf } from "./pdf-fixture.ts";
 
 const searchHit = (extra: Record<string, unknown>) =>
   JSON.stringify({ resultList: { result: [{ id: "123", source: "MED", title: "My Protocol", ...extra }] } });
@@ -469,6 +476,39 @@ describe("directPdfUrl", () => {
 
   it("declines undefined", () => {
     expect(directPdfUrl(undefined)).toBeNull();
+  });
+
+  it("recovers a Bio-protocol DOI from its publisher article URL", () => {
+    expect(bioProtocolDoiFromUrl("https://bio-protocol.org/en/bpdetail?id=5775&type=0")).toBe(
+      "10.21769/BioProtoc.5775",
+    );
+    expect(bioProtocolDoiFromUrl("https://en.bio-protocol.org/bpdetail?id=2829")).toBe(
+      "10.21769/BioProtoc.2829",
+    );
+  });
+
+  it("does not derive a DOI from malformed ids or lookalike hosts", () => {
+    expect(bioProtocolDoiFromUrl("https://bio-protocol.org/en/bpdetail?id=abc")).toBeNull();
+    expect(bioProtocolDoiFromUrl("https://bio-protocol.org.evil.test/en/bpdetail?id=5775")).toBeNull();
+    expect(bioProtocolDoiFromUrl("https://bio-protocol.org/en/searchlist?id=5775")).toBeNull();
+  });
+
+  it("fetches a Bio-protocol DOI from its public PDF before bibliographic APIs", async () => {
+    const seen: string[] = [];
+    const publisher = (async (url: string) => {
+      seen.push(url);
+      return new Response(minimalPdf("Step 1: wash the purified PCR product."), {
+        status: 200,
+        headers: { "content-type": "application/pdf" },
+      });
+    }) as unknown as typeof fetch;
+
+    const out = await getProtocolFulltext("10.21769/BioProtoc.5775", { fetchImpl: publisher });
+
+    expect(seen).toEqual(["https://en.bio-protocol.org/pdf/Bio-protocol5775.pdf"]);
+    expect(out).toContain("publisher open-access PDF");
+    expect(out).toContain("Step 1: wash the purified PCR product");
+    expect(out).toContain("_status: ok_");
   });
 });
 

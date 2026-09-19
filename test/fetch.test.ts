@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { fetchResource, fetchResources } from "../src/fetch.ts";
 import { _resetRebaseCache } from "../src/rebase.ts";
+import { minimalPdf } from "./pdf-fixture.ts";
 
 // Reuse a tiny REBASE slice so `rebase:` / bare-enzyme routing stays offline.
 const REBASE = `REBASE codes for commercial sources of enzymes
@@ -58,6 +59,30 @@ describe("fetchResource — scheme dispatch", () => {
   it("extracts the page text for a url id the site serves", async () => {
     const out = await fetchResource("url:https://www.promega.com/y", { fetchImpl: servesHtml });
     expect(out).toContain("Denature at 98C for 30 seconds");
+    expect(out).toContain("_status: ok_");
+  });
+
+  it("fetches Bio-protocol's public PDF before its protected article HTML", async () => {
+    const seen: string[] = [];
+    const publisher = (async (url: string) => {
+      seen.push(url);
+      if (url === "https://en.bio-protocol.org/pdf/Bio-protocol5775.pdf") {
+        return new Response(minimalPdf("Step 1: purify the PCR product."), {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        });
+      }
+      return new Response("SafeLine WAF", { status: 403 });
+    }) as unknown as typeof fetch;
+
+    const out = await fetchResource(
+      "url:https://bio-protocol.org/en/bpdetail?id=5775&type=0",
+      { fetchImpl: publisher },
+    );
+
+    expect(seen).toEqual(["https://en.bio-protocol.org/pdf/Bio-protocol5775.pdf"]);
+    expect(out).toContain("publisher open-access PDF");
+    expect(out).toContain("Step 1: purify the PCR product");
     expect(out).toContain("_status: ok_");
   });
 

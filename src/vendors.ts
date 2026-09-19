@@ -150,9 +150,9 @@ export const VENDORS: Vendor[] = [
     name: "Bio-protocol",
     blurb: "Peer-reviewed, community-contributed step-by-step life-science protocols.",
     kind: "journal",
-    // Search is public, while article pages currently trip SafeLine; scholarly
-    // metadata and the deterministic publisher PDF remain useful fallbacks.
-    fetchability: "partial",
+    // Search is public. Article HTML can trip SafeLine, but the numeric article
+    // id deterministically maps to the publisher's public, parseable PDF.
+    fetchability: "full",
     publisherFetch: "blocked",
     searchSite: "bio-protocol.org",
     journal: {

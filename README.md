@@ -207,6 +207,15 @@ exit. It returned three canonical NEB products in 36.2 seconds with route
 `publisher-browserless-residential`; fetching the top product through
 `/content` returned 16,378 characters as `display-only-full-text`.
 
+Bio-protocol uses a different recovery route. Its article HTML may trigger
+SafeLine, but the numeric `bpdetail?id=…` value is also the suffix of its DOI
+and official open-access PDF. Labee therefore converts the publisher result to
+`doi:10.21769/BioProtoc.…` and fetches
+`https://en.bio-protocol.org/pdf/Bio-protocol….pdf` directly, before attempting
+the protected HTML or bibliographic fallbacks. A 2026-09-19 AWS-origin check of
+article 5775 returned a 7.4 MB PDF with a valid `%PDF-` signature, and the built
+CLI extracted its procedure as `_status: ok_`.
+
 Two limits are deliberate. Results are labelled `display-only-full-text` rather
 than `ok`, because a page that needed a remote browser is not the same evidence
 as one a plain request returned. And entitled retrieval never uses it: that path

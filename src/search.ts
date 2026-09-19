@@ -15,6 +15,7 @@ import { resolveVendors, getVendor, type Fetchability, type Vendor } from "./ven
 import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
 import { assessDoiAvailability, type DoiAvailabilityEvidence } from "./availability.ts";
 import { searchPublisher } from "./publisher-search.ts";
+import { bioProtocolDoiFromUrl } from "./fulltext.ts";
 
 export interface VendorResults {
   id: string;
@@ -333,6 +334,8 @@ function gradeForEvidence(evidence: DoiAvailabilityEvidence): Fetchability {
  * `fetchability`, which the caller applies.
  */
 function idForArticleUrl(url: string): { id: string; resolvable: boolean } {
+  const bioProtocolDoi = bioProtocolDoiFromUrl(url);
+  if (bioProtocolDoi) return { id: `doi:${bioProtocolDoi}`, resolvable: true };
   const doi = /doi\.org\/(10\.\S+)/i.exec(url);
   // JoVE mints a `-v` sibling DOI for the video edition of an article
   // (10.3791/59550-v alongside 10.3791/59550). Europe PMC indexes only the
