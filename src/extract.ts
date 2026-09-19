@@ -14,7 +14,11 @@ import { type ProviderOptions, decodeEntities, stripTags, userAgent } from "./pr
 import { CookieJar, defaultUrlValidator, fetchFollowingWithCookies } from "./cookies.ts";
 import { type Entitlement, classifyEntitlement } from "./entitlement.ts";
 import { browserlessConfig, looksLikeSoftNotFound, renderWithBrowserless } from "./browserless.ts";
-import { awaitResidentialReady, residentialSelectorFor } from "./residential.ts";
+import {
+  awaitResidentialReady,
+  residentialSelectorFor,
+  type ResidentialSelector,
+} from "./residential.ts";
 import { getVendorForUrl } from "./vendors.ts";
 
 export type ExtractFormat = "html" | "xml" | "pdf" | "json";
@@ -27,11 +31,21 @@ export interface Extracted {
    * ordinary request. Callers that assign a licence-bearing status must treat
    * it as browser-derived: see fetchWebPage in fetch.ts.
    */
-  via?: "browserless";
+  via?: "browserless" | "browserless-residential";
+  /** Why the residential route was selected, used to label entitled content honestly. */
+  residentialReason?: "render-failure" | "subscription-preview";
 }
 
 // Don't pull a whole book into memory for a "best-effort" extraction.
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+/** Publisher preview that says the protocol body requires subscription access. */
+export function looksLikeSubscriptionPreview(url: string, text: string): boolean {
+  if (getVendorForUrl(url)?.publisherFetch !== "abstract-only") return false;
+  return /(?:preview of subscription content|access (?:this article |the full (?:article|text) )?(?:through|via) your institution|institutional access|subscribe to (?:this journal|read)|buy this article|purchase (?:this|the) article|full (?:article|text) access)/i.test(
+    text,
+  );
+}
 
 /** Collapse HTML-ish markup to text while preserving paragraph breaks. */
 function htmlToText(html: string): string {
@@ -308,13 +322,14 @@ function residentialReadyTimeoutMs(): number {
 
 /**
  * Retrieve through the remote browser. The server's datacenter route is always
- * tried first; only a failed or challenged render is retried through a
- * registered local residential exit.
+ * tried first; a failed/challenged render or subscription-only preview is then
+ * retried through a registered local residential exit.
  */
-async function extractViaBrowser(
+export async function extractViaBrowser(
   url: string,
   opts: ProviderOptions,
   maxChars: number,
+  residentialOverride?: ResidentialSelector,
 ): Promise<Extracted | null> {
   const cfg = browserlessConfig();
   if (!cfg || !suitableForBrowser(url)) return null;
@@ -328,22 +343,37 @@ async function extractViaBrowser(
   }
 
   const doFetch = opts.fetchImpl ?? fetch;
-  const accept = (html: string | null): Extracted | null => {
+  const accept = (
+    html: string | null,
+    via: "browserless" | "browserless-residential",
+  ): Extracted | null => {
     if (!html) return null;
     const text = htmlToText(html);
     // Browserless routes do not preserve a useful origin status in every mode,
     // so a soft 404 and a challenge must be rejected from their rendered body.
     if (!text || looksLikeBotWall(text) || looksLikeSoftNotFound(text)) return null;
-    return { text: cap(text, maxChars), format: "html", via: "browserless" };
+    return { text: cap(text, maxChars), format: "html", via };
   };
 
-  const datacenter = accept(await renderWithBrowserless(url, doFetch, cfg));
-  if (datacenter) return datacenter;
+  const datacenter = accept(await renderWithBrowserless(url, doFetch, cfg), "browserless");
+  const subscriptionPreview = Boolean(
+    datacenter && looksLikeSubscriptionPreview(url, datacenter.text),
+  );
+  if (datacenter && !subscriptionPreview) return datacenter;
 
-  await awaitResidentialReady(residentialReadyTimeoutMs());
-  const selector = residentialSelectorFor(url);
-  if (!selector) return null;
-  return accept(await renderWithBrowserless(url, doFetch, cfg, selector));
+  if (!residentialOverride) await awaitResidentialReady(residentialReadyTimeoutMs());
+  const selector = residentialOverride ?? residentialSelectorFor(url);
+  if (!selector) return datacenter;
+  const residential = accept(
+    await renderWithBrowserless(url, doFetch, cfg, selector),
+    "browserless-residential",
+  );
+  if (residential) {
+    residential.residentialReason = subscriptionPreview
+      ? "subscription-preview"
+      : "render-failure";
+  }
+  return residential ?? datacenter;
 }
 
 /**

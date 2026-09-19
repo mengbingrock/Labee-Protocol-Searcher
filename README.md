@@ -81,6 +81,14 @@ order:
    through that exit; then fall through to the source's legal direct/API
    alternatives.
 
+If a successful datacenter render exposes only a publisher subscription
+preview, Labee also retries that page through an available registered
+residential exit before returning `abstract-only`. This can use subscription
+access already attached to the user's network; it does not create an
+entitlement or bypass a paywall. When that retry exposes the protocol body, the
+result is labelled `entitled-full-text`, never open access, and remains governed
+by the applicable subscription terms.
+
 Each source in JSON output includes the route that actually supplied its
 results. The daily matrix below publishes the same route, so a fallback is
 visible instead of being reported as a successful publisher search.

@@ -22,8 +22,7 @@ import {
   getProtocolFulltext,
   type FulltextOptions,
 } from "./fulltext.ts";
-import { extractOaContent } from "./extract.ts";
-import { getVendorForUrl } from "./vendors.ts";
+import { extractOaContent, looksLikeSubscriptionPreview } from "./extract.ts";
 
 const PMCID = /^PMC\d+$/i;
 const PMID = /^\d+$/;
@@ -48,14 +47,6 @@ function notFetchable(url: string): string {
       `Open it directly: ${url}`,
     "not-fetchable",
     "technical-retrieval-failure",
-  );
-}
-
-/** Publisher copy that exposes an abstract/preview but gates the protocol body. */
-function isSubscriptionPreview(url: string, text: string): boolean {
-  if (getVendorForUrl(url)?.publisherFetch !== "abstract-only") return false;
-  return /(?:preview of subscription content|access (?:this article |the full (?:article|text) )?(?:through|via) your institution|institutional access|subscribe to (?:this journal|read)|buy this article|purchase (?:this|the) article|full (?:article|text) access)/i.test(
-    text,
   );
 }
 
@@ -89,22 +80,37 @@ async function fetchWebPage(url: string, opts: FetchOptions): Promise<string> {
 
   const extracted = await extractOaContent(url, opts, WEB_PAGE_MAX_CHARS);
   if (!extracted?.text?.trim()) return notFetchable(url);
-  if (isSubscriptionPreview(url, extracted.text)) {
+  if (looksLikeSubscriptionPreview(url, extracted.text)) {
     return withStatus(
       `_Source: ${url} (publisher abstract/preview; the protocol body requires institutional ` +
-        `or individual subscription access). This is an expected access limitation, not a ` +
-        `technical retrieval error._\n\n${extracted.text}`,
+        `or individual subscription access). Labee also tried an available registered residential ` +
+        `exit before returning this result. This is an expected access limitation, not a technical ` +
+        `retrieval error._\n\n${extracted.text}`,
       "abstract-only",
       "subscription-required",
+    );
+  }
+  if (
+    extracted.via === "browserless-residential" &&
+    extracted.residentialReason === "subscription-preview"
+  ) {
+    return withStatus(
+      `_Source: ${url} (publisher full text read through the registered residential network ` +
+        `after the datacenter received a subscription preview — NOT open access; access and ` +
+        `redistribution remain governed by that subscription)._\n\n${extracted.text}`,
+      "entitled-full-text",
     );
   }
   // A vendor page carries no licence signal either way, but how it was obtained
   // still differs: content a plain request returned is `ok`, while content that
   // needed a remote browser gets the same label the local browser adapters use.
   // Reporting the second as `ok` would erase that distinction for the caller.
-  if (extracted.via === "browserless") {
+  if (extracted.via) {
+    const route = extracted.via === "browserless-residential"
+      ? "read through a registered residential proxy"
+      : "read in a remote browser";
     return withStatus(
-      `_Source: ${url} (read in a remote browser; no redistribution licence was detected)._` +
+      `_Source: ${url} (${route}; no redistribution licence was detected)._` +
         `\n\n${extracted.text}`,
       "display-only-full-text",
     );

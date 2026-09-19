@@ -182,6 +182,9 @@ export const TOOLS = [
       "`url:` page is fetched and its readable text extracted; most vendors work, but a few (notably " +
       "neb.com, sigmaaldrich.com, emdmillipore.com) refuse automated requests and return their link " +
       "instead — `search` grades each result so you know which to expect. " +
+      "When a publisher page returns a subscription-only preview, fetch retries it through an available " +
+      "registered residential exit before returning `abstract-only`; this uses only access already attached " +
+      "to that network and does not create an entitlement. " +
       "After a host-browser NEB search is committed, fetch returns the exact HTML or rendered text captured " +
       "by that same integrated Browser profile without reopening NEB. Default-profile searches likewise reuse " +
       "their captured HTML. Pass `browser: chrome` only after explicit user authorization: if native journal " +

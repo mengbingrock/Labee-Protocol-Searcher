@@ -5,7 +5,12 @@ import {
   looksLikeSoftNotFound,
   renderWithBrowserless,
 } from "../src/browserless.ts";
-import { extractOaContent, extractEntitledArticle } from "../src/extract.ts";
+import {
+  extractEntitledArticle,
+  extractOaContent,
+  extractViaBrowser,
+  looksLikeSubscriptionPreview,
+} from "../src/extract.ts";
 import { fetchResource } from "../src/fetch.ts";
 
 const PAGE = `<html><body><article><p>${"Add 5 µl of buffer and incubate at 37 °C. ".repeat(20)}</p></article></body></html>`;
@@ -171,6 +176,47 @@ describe("extractOaContent — remote-browser fallback", () => {
       5_000,
     );
     expect(seen.some((u) => /\/(content|unblock)/.test(u))).toBe(false);
+  });
+
+  it("retries a subscription preview through an available residential exit", async () => {
+    process.env.BROWSERLESS_TOKEN = "t";
+    process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";
+    const preview =
+      "<html><body><article><h2>Abstract</h2><p>Protocol summary.</p>" +
+      "<p>This is a preview of subscription content; access via your institution.</p>" +
+      "</article></body></html>";
+    const full = `<html><body><article><h2>Procedure</h2><p>${
+      "Add buffer and incubate at 37 °C. ".repeat(100)
+    }</p></article></body></html>`;
+    const seen: string[] = [];
+    const f = (async (url: string) => {
+      seen.push(url);
+      return new Response(url.includes("residentialProxy=true") ? full : preview, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+
+    const out = await extractViaBrowser(
+      "https://www.nature.com/articles/example",
+      { fetchImpl: f },
+      20_000,
+      { country: "US" },
+    );
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toContain("residentialProxy=true");
+    expect(seen[1]).toContain("residentialProxy=true");
+    expect(out?.via).toBe("browserless-residential");
+    expect(out?.residentialReason).toBe("subscription-preview");
+    expect(out?.text).toContain("Add buffer and incubate");
+    expect(looksLikeSubscriptionPreview("https://www.nature.com/articles/example", out!.text)).toBe(false);
+  });
+
+  it("recognises subscription previews only for publishers graded abstract-only", () => {
+    const text = "This is a preview of subscription content; access via your institution.";
+    expect(looksLikeSubscriptionPreview("https://www.nature.com/articles/example", text)).toBe(true);
+    expect(looksLikeSubscriptionPreview("https://www.neb.com/protocols/example", text)).toBe(false);
   });
 });
 
