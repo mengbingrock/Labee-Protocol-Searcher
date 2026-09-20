@@ -86,6 +86,32 @@ describe("searchProtocols", () => {
     expect(seen.some((url) => url.includes("api.search.brave.com"))).toBe(false);
   });
 
+  it("ranks query-focused publisher links ahead of earlier unrelated links", async () => {
+    process.env.BROWSERLESS_TOKEN = "t";
+    process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";
+    const fakeFetch = (async (url: string) => {
+      if (!url.includes("/content?")) throw new Error(`unexpected fallback: ${url}`);
+      return new Response(
+        `<html><head><title>Search</title></head><body>` +
+          `<a href="https://www.nature.com/articles/s41596-026-00001-1">Genome mapping method</a>` +
+          `<a href="https://www.nature.com/articles/s41596-026-00002-2">PCR product purification workflow</a>` +
+          `</body></html>`,
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const resp = await searchProtocols("PCR purification", {
+      vendors: ["nature-protocols"],
+      limit: 1,
+      providerOpts: { fetchImpl: fakeFetch },
+    });
+
+    expect(resp.vendors[0]!.results[0]).toMatchObject({
+      title: "PCR product purification workflow",
+      url: "https://www.nature.com/articles/s41596-026-00002-2",
+    });
+  });
+
   it("uses the database/web provider only after the publisher page has no credible results", async () => {
     process.env.BROWSERLESS_TOKEN = "t";
     process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";

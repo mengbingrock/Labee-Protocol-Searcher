@@ -1,6 +1,6 @@
 {
   "name": "labee-protocol-searcher",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Search and retrieve laboratory protocols through the hosted MCP service, with a thin local stdio and optional residential-exit bridge.",
   "author": {
     "name": "Labee",

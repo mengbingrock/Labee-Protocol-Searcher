@@ -32,6 +32,8 @@ export interface Extracted {
    * it as browser-derived: see fetchWebPage in fetch.ts.
    */
   via?: "browserless" | "browserless-residential";
+  /** True when a registered residential route was actually invoked, even if it did not improve the result. */
+  residentialAttempted?: boolean;
   /** Why the residential route was selected, used to label entitled content honestly. */
   residentialReason?: "render-failure" | "subscription-preview";
 }
@@ -369,10 +371,12 @@ export async function extractViaBrowser(
     "browserless-residential",
   );
   if (residential) {
+    residential.residentialAttempted = true;
     residential.residentialReason = subscriptionPreview
       ? "subscription-preview"
       : "render-failure";
   }
+  if (datacenter) datacenter.residentialAttempted = true;
   return residential ?? datacenter;
 }
 

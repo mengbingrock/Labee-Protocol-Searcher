@@ -39,7 +39,46 @@ function canonicalResultUrl(raw: string): string {
   }
 }
 
-function resultsFromPage(vendor: Vendor, page: BrowserlessSearchPage, limit: number): RawResult[] {
+const QUERY_STOPWORDS = new Set([
+  "a", "an", "and", "for", "in", "of", "on", "or", "protocol", "the", "to", "with",
+]);
+
+function words(text: string): string[] {
+  return text
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Rank first-party links by query coverage without discarding synonym matches. */
+function relevanceScore(result: RawResult, query: string): number {
+  const queryWords = [...new Set(words(query).filter((word) => !QUERY_STOPWORDS.has(word)))];
+  if (queryWords.length === 0) return 0;
+
+  const titleWords = words(result.title);
+  const bodyWords = words(`${result.title} ${result.snippet}`);
+  const titleSet = new Set(titleWords);
+  const bodySet = new Set(bodyWords);
+  const titleMatches = queryWords.filter((word) => titleSet.has(word)).length;
+  const bodyMatches = queryWords.filter((word) => bodySet.has(word)).length;
+  const phrase = queryWords.join(" ");
+
+  return (
+    (titleWords.join(" ").includes(phrase) ? 10_000 : 0) +
+    (bodyWords.join(" ").includes(phrase) ? 4_000 : 0) +
+    titleMatches * 1_000 +
+    bodyMatches * 200 +
+    (titleMatches === queryWords.length ? 2_000 : 0) +
+    (bodyMatches === queryWords.length ? 500 : 0)
+  );
+}
+
+function resultsFromPage(
+  vendor: Vendor,
+  page: BrowserlessSearchPage,
+  query: string,
+  limit: number,
+): RawResult[] {
   if (CHALLENGE.test(`${page.title}\n${page.bodyText.slice(0, 2_000)}`)) return [];
   const byUrl = new Map<string, RawResult>();
   for (const link of page.links) {
@@ -57,7 +96,11 @@ function resultsFromPage(vendor: Vendor, page: BrowserlessSearchPage, limit: num
     if (!current) byUrl.set(url, candidate);
     else if (titleScore(candidate.title) > titleScore(current.title)) byUrl.set(url, candidate);
   }
-  return [...byUrl.values()].slice(0, limit);
+  return [...byUrl.values()]
+    .map((result, index) => ({ result, index, score: relevanceScore(result, query) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .map(({ result }) => result);
 }
 
 /** Search one publisher's own rendered search UI, datacenter first. */
@@ -122,7 +165,7 @@ export async function searchPublisher(
     if (residentialSelector) {
       residentialAttempted = true;
       const residential = await runPublisherSearch(residentialSelector);
-      const residentialResults = residential ? resultsFromPage(vendor, residential, limit) : [];
+      const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit) : [];
       if (residentialResults.length > 0) {
         return {
           results: residentialResults,
@@ -135,7 +178,7 @@ export async function searchPublisher(
   }
 
   const direct = await runPublisherSearch();
-  const directResults = direct ? resultsFromPage(vendor, direct, limit) : [];
+  const directResults = direct ? resultsFromPage(vendor, direct, query, limit) : [];
   if (directResults.length > 0) {
     return {
       results: directResults,
@@ -155,7 +198,7 @@ export async function searchPublisher(
     : (residentialSelector ?? residentialSelectorFor(entryUrl));
   if (selector) {
     const residential = await runPublisherSearch(selector);
-    const residentialResults = residential ? resultsFromPage(vendor, residential, limit) : [];
+    const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit) : [];
     if (residentialResults.length > 0) {
       return {
         results: residentialResults,

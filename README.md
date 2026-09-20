@@ -54,7 +54,7 @@ codex plugin add labee-protocol-searcher@labee_market
 
 Start a new Codex conversation after installation so the plugin's tools and
 skill are loaded. The plugin downloads the pinned public npm release
-`@mengbingrock/labee-protocol-searcher@0.5.0` when its MCP server starts.
+`@mengbingrock/labee-protocol-searcher@0.6.0` when its MCP server starts.
 
 ## The problems Labee solves
 
@@ -97,8 +97,9 @@ order:
    its live Coveo result anchors; `/function` is reserved for publishers that
    require form interaction and for IDT's Shadow DOM results.
 2. Wait up to 30 seconds for client-rendered results, reject navigation links,
-   challenge pages, and soft 404s, and keep only URLs matching that publisher's
-   known result shape.
+   challenge pages, and soft 404s, keep only URLs matching that publisher's
+   known result shape, and rank those links by query-term coverage before
+   applying the requested result limit.
 3. If publisher search fails, use scholarly indexes for journals or a
    site-scoped Brave/Google query for suppliers.
 4. Fetch a selected publisher page through Browserless first. If that render
@@ -112,7 +113,9 @@ residential exit before returning `abstract-only`. This can use subscription
 access already attached to the user's network; it does not create an
 entitlement or bypass a paywall. When that retry exposes the protocol body, the
 result is labelled `entitled-full-text`, never open access, and remains governed
-by the applicable subscription terms.
+by the applicable subscription terms. The retrieval note explicitly says
+whether that residential retry occurred; it never claims a retry when the
+client did not register an exit.
 
 Each source in JSON output includes the route that actually supplied its
 results. The daily matrix below publishes the same route, so a fallback is

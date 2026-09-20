@@ -53,6 +53,8 @@ describe("fetchResource — scheme dispatch", () => {
     expect(out).toContain("expected access limitation, not a technical retrieval error");
     expect(out).toContain("_reason: subscription-required_");
     expect(out).toContain("_status: abstract-only_");
+    expect(out).toContain("no residential retry was made");
+    expect(out).not.toContain("also tried an available registered residential exit");
     expect(out).not.toContain("_status: display-only-full-text_");
   });
 

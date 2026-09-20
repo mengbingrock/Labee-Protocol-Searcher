@@ -81,10 +81,12 @@ async function fetchWebPage(url: string, opts: FetchOptions): Promise<string> {
   const extracted = await extractOaContent(url, opts, WEB_PAGE_MAX_CHARS);
   if (!extracted?.text?.trim()) return notFetchable(url);
   if (looksLikeSubscriptionPreview(url, extracted.text)) {
+    const residentialNote = extracted.residentialAttempted
+      ? "Labee also tried an available registered residential exit before returning this result."
+      : "No registered residential exit was available for this request, so no residential retry was made.";
     return withStatus(
       `_Source: ${url} (publisher abstract/preview; the protocol body requires institutional ` +
-        `or individual subscription access). Labee also tried an available registered residential ` +
-        `exit before returning this result. This is an expected access limitation, not a technical ` +
+        `or individual subscription access). ${residentialNote} This is an expected access limitation, not a technical ` +
         `retrieval error._\n\n${extracted.text}`,
       "abstract-only",
       "subscription-required",
