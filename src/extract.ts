@@ -13,7 +13,13 @@
 import { type ProviderOptions, decodeEntities, stripTags, userAgent } from "./providers/types.ts";
 import { CookieJar, defaultUrlValidator, fetchFollowingWithCookies } from "./cookies.ts";
 import { type Entitlement, classifyEntitlement } from "./entitlement.ts";
-import { browserlessConfig, looksLikeSoftNotFound, renderWithBrowserless } from "./browserless.ts";
+import {
+  assertBrowserlessEndpoint,
+  browserlessConfig,
+  endpointFlavor,
+  looksLikeSoftNotFound,
+  renderWithBrowserless,
+} from "./browserless.ts";
 import {
   awaitResidentialReady,
   residentialSelectorFor,
@@ -366,6 +372,14 @@ export async function extractViaBrowser(
   if (!residentialOverride) await awaitResidentialReady(residentialReadyTimeoutMs());
   const selector = residentialOverride ?? residentialSelectorFor(url);
   if (!selector) return datacenter;
+  // Hosted browserless.io has no connection to our residential-agent fork.
+  // Passing a selector there would issue a second datacenter request and then
+  // falsely label it as residential.
+  try {
+    if (endpointFlavor(assertBrowserlessEndpoint(cfg.endpoint)) === "hosted") return datacenter;
+  } catch {
+    return datacenter;
+  }
   const residential = accept(
     await renderWithBrowserless(url, doFetch, cfg, selector),
     "browserless-residential",

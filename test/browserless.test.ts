@@ -238,6 +238,31 @@ describe("extractOaContent — remote-browser fallback", () => {
     expect(out?.residentialReason).toBe("subscription-preview");
   });
 
+  it("does not mislabel a repeated hosted-browser request as residential", async () => {
+    process.env.BROWSERLESS_TOKEN = "t";
+    process.env.BROWSERLESS_URL = "https://production-sfo.browserless.io";
+    const preview =
+      "<html><body><article><h2>Abstract</h2>" +
+      "<p>This is a preview of subscription content; access via your institution.</p>" +
+      "</article></body></html>";
+    let calls = 0;
+    const f = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ content: preview }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const out = await extractViaBrowser(
+      "https://www.nature.com/articles/example",
+      { fetchImpl: f },
+      20_000,
+      { country: "US" },
+    );
+
+    expect(calls).toBe(1);
+    expect(out?.via).toBe("browserless");
+    expect(out?.residentialAttempted).toBeUndefined();
+  });
+
   it("recognises subscription previews only for publishers graded abstract-only", () => {
     const text = "This is a preview of subscription content; access via your institution.";
     expect(looksLikeSubscriptionPreview("https://www.nature.com/articles/example", text)).toBe(true);
