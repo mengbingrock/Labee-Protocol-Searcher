@@ -5,7 +5,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@mengbingrock/labee-protocol-searcher@0.5.0"
+        "@mengbingrock/labee-protocol-searcher@0.6.0"
       ],
       "env_vars": [
         "MCP_BEARER_TOKEN",
