@@ -456,13 +456,13 @@ Latest measured result (2026-09-18):
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-25T10:24Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-09-26T10:03Z** · probe query `PCR purification` (`EcoRI` for REBASE)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep. Publisher search uses the AWS Browserless deployment first; this report shows when a scholarly or web database had to answer instead.
 
-✅ **All configured backends answered.**
+❌ **1 backend not answering:** `semanticscholar`. The chains fall through, so search still works as long as one provider per chain is up.
 
-⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `star-protocols` (graded `full` but the site refused the request); `sigma-aldrich` (graded `none` but the page extracted fine); `emd-millipore` (graded `none` but the page extracted fine).
+⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `sigma-aldrich` (graded `none` but the page extracted fine); `emd-millipore` (graded `none` but the page extracted fine).
 
 **Backends**
 
@@ -471,7 +471,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `crossref` | journal | ✅ 3 results |
 | `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
-| `semanticscholar` | journal | ✅ 3 results |
+| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 1 result |
 | `google` | web | — not configured |
@@ -480,11 +480,11 @@ The scheduled run searches every declared protocol journal and vendor, then call
 
 | Source | Search route | Declared `fetch` | Search hits | Top result `fetch` |
 | --- | --- | --- | --- | --- |
-| `star-protocols` | ✅ AWS Browserless | ✅ full | ✅ 3 | ❌ `not-fetchable` · technical retrieval failure |
+| `star-protocols` | ⚠️ fallback · `crossref+europepmc+openalex+pubmed` | ✅ full | ✅ 10 | ✅ `ok` · Europe PMC |
 | `nature-protocols` | ✅ AWS Browserless | ⚠️ partial | ✅ 3 | ⚠️ `abstract-only` · subscription required (not an error) |
-| `jove` | ⚠️ fallback · `crossref+openalex` | ⚠️ partial | ✅ 5 | ✅ `ok` · NCBI author manuscript |
+| `jove` | ✅ AWS Browserless | ⚠️ partial | ✅ 3 | ✅ `display-only-full-text` |
 | `bio-protocol` | ✅ AWS Browserless | ✅ full | ✅ 2 | ✅ `ok` |
-| `current-protocols` | ⚠️ fallback · `crossref+europepmc+openalex+pubmed` | ⚠️ partial | ✅ 10 | ⚠️ `abstract-only` · no public full text · Europe PMC abstract |
+| `current-protocols` | ⚠️ fallback · `crossref+europepmc+openalex+semanticscholar+pubmed` | ⚠️ partial | ✅ 12 | ⚠️ `abstract-only` · no public full text · Europe PMC abstract |
 | `protocols-io` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `thermofisher` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `qiagen` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
@@ -497,7 +497,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `idt` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `rebase` | — REBASE flat file | ✅ full | ❌ fetch failed | — not probed |
 
-**Per-DOI retrieval:** 6/17 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
+**Per-DOI retrieval:** 14/24 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
 
 _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetch` is behaving as graded, not failing. Every ❌ above is a second failed attempt — probes retry once before being recorded as down._
 
@@ -505,6 +505,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Publisher search | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-09-26 | ⚠️ 5/6 | ⚠️ 11/15 | ⚠️ 15/16 | ⚠️ 13/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-09-25 | ✅ 6/6 | ⚠️ 11/15 | ⚠️ 15/16 | ⚠️ 12/16 | — | `star-protocols`, `sigma-aldrich`, `emd-millipore` |
 | 2026-09-24 | ⚠️ 5/6 | ⚠️ 10/15 | ⚠️ 15/16 | ⚠️ 13/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-09-23 | ⚠️ 5/6 | ⚠️ 12/15 | ⚠️ 15/16 | ⚠️ 14/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
@@ -534,7 +535,6 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-08-30 | ⚠️ 5/6 | — | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 | 2026-08-29 | ✅ 6/6 | — | ✅ 16/16 | ⚠️ 10/16 | — | — |
 | 2026-08-28 | ⚠️ 5/7 | — | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
-| 2026-08-27 | ⚠️ 5/7 | — | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar`, `duckduckgo` | — |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
