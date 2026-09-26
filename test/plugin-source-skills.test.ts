@@ -6,8 +6,26 @@ const skillsRoot = new URL(
   "../plugins/labee-protocol-searcher/skills/",
   import.meta.url,
 );
+const pluginRoot = new URL("../plugins/labee-protocol-searcher/", import.meta.url);
 
 describe("Codex plugin source selectors", () => {
+  it("connects to the hosted MCP directly without an npm startup dependency", () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL(".mcp.json", pluginRoot), "utf8"),
+    ) as {
+      mcpServers: Record<string, Record<string, unknown>>;
+    };
+    const server = manifest.mcpServers["labee-protocol-searcher"];
+
+    expect(server).toEqual({
+      type: "http",
+      url: "https://labee.online/mcp",
+      bearer_token_env_var: "MCP_BEARER_TOKEN",
+    });
+    expect(server).not.toHaveProperty("command");
+    expect(server).not.toHaveProperty("args");
+  });
+
   it("exposes one toggleable skill for every searchable source", () => {
     const expected = [...VENDOR_IDS, "rebase"].sort();
     const actual = readdirSync(skillsRoot, { withFileTypes: true })
