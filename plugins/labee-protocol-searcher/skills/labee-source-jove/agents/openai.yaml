@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · JoVE"
+  short_description: "Include JoVE in Labee searches"
+  default_prompt: "Use $labee-source-jove when searching this Labee source."

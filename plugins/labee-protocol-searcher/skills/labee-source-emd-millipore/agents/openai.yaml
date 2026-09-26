@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · EMD Millipore"
+  short_description: "Include EMD Millipore in Labee searches"
+  default_prompt: "Use $labee-source-emd-millipore when searching this Labee source."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · NEB"
+  short_description: "Include NEB in Labee searches"
+  default_prompt: "Use $labee-source-neb when searching this Labee source."

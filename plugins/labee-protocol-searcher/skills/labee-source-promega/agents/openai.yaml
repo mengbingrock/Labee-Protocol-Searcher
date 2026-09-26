@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Promega"
+  short_description: "Include Promega in Labee searches"
+  default_prompt: "Use $labee-source-promega when searching this Labee source."

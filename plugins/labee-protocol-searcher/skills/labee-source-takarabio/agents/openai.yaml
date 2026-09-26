@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Takara Bio"
+  short_description: "Include Takara Bio in Labee searches"
+  default_prompt: "Use $labee-source-takarabio when searching this Labee source."

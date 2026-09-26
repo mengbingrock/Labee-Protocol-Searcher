@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · protocols.io"
+  short_description: "Include protocols.io in Labee searches"
+  default_prompt: "Use $labee-source-protocols-io when searching this Labee source."

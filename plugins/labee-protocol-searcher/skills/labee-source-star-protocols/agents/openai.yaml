@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · STAR Protocols"
+  short_description: "Include STAR Protocols in Labee searches"
+  default_prompt: "Use $labee-source-star-protocols when searching this Labee source."

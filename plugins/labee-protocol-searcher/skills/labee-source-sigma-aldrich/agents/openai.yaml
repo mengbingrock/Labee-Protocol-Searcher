@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Sigma-Aldrich"
+  short_description: "Include Sigma-Aldrich in Labee searches"
+  default_prompt: "Use $labee-source-sigma-aldrich when searching this Labee source."

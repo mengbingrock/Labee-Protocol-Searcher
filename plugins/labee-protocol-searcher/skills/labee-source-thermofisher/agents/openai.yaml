@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Thermo Fisher"
+  short_description: "Include Thermo Fisher in Labee searches"
+  default_prompt: "Use $labee-source-thermofisher when searching this Labee source."

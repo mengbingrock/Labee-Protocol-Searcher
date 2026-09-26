@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · REBASE"
+  short_description: "Include REBASE in Labee searches"
+  default_prompt: "Use $labee-source-rebase when searching this Labee source."

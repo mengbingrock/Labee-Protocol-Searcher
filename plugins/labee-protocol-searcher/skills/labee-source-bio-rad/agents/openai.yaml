@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Bio-Rad"
+  short_description: "Include Bio-Rad in Labee searches"
+  default_prompt: "Use $labee-source-bio-rad when searching this Labee source."

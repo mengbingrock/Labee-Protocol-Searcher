@@ -44,17 +44,21 @@ preview. No residential-agent secret is sent in the MCP request.
 
 ## Install the Codex plugin
 
-The public Labee marketplace packages the MCP server with a skill that prefers
-Codex's integrated Browser for NEB search and retrieval.
+The public Labee marketplace packages the MCP server with a core workflow skill
+and one toggleable source skill for every publisher, supplier, and REBASE. Open
+Labee in **Plugins**, then use the switches under **Skills** to choose the
+sources searched by default. The core workflow also prefers Codex's integrated
+Browser for NEB search and retrieval.
 
 ```bash
 codex plugin marketplace add mengbingrock/Labee-Protocol-Searcher --ref main
 codex plugin add labee-protocol-searcher@labee_market
 ```
 
-Start a new Codex conversation after installation so the plugin's tools and
-skill are loaded. The plugin downloads the pinned public npm release
-`@mengbingrock/labee-protocol-searcher@0.6.0` when its MCP server starts.
+Start a new Codex conversation after installation or after changing source
+switches so the plugin's tools and enabled skills are loaded. The plugin
+downloads the pinned public npm release `@mengbingrock/labee-protocol-searcher@0.6.0`
+when its MCP server starts.
 
 ## The problems Labee solves
 

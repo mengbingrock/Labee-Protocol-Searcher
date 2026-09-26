@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · QIAGEN"
+  short_description: "Include QIAGEN in Labee searches"
+  default_prompt: "Use $labee-source-qiagen when searching this Labee source."

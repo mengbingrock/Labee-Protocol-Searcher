@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Nature Protocols"
+  short_description: "Include Nature Protocols in Labee searches"
+  default_prompt: "Use $labee-source-nature-protocols when searching this Labee source."

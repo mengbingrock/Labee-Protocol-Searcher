@@ -1,7 +1,7 @@
 {
   "name": "labee-protocol-searcher",
-  "version": "0.6.0",
-  "description": "Search and retrieve laboratory protocols through the hosted MCP service, with a thin local stdio and optional residential-exit bridge.",
+  "version": "0.6.0+codex.20260926021256",
+  "description": "Search selected laboratory-protocol publishers through the hosted MCP service, with per-source toggles and safe browser-assisted retrieval.",
   "author": {
     "name": "Labee",
     "url": "https://github.com/mengbingrock"
@@ -19,8 +19,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Labee Protocol Searcher",
-    "shortDescription": "Search protocols with safe browser-assisted retrieval.",
-    "longDescription": "Forward MCP calls from a thin local stdio bridge to the hosted Labee service, search protocol journals, vendors, and REBASE, and offer an explicitly enabled residential exit only for publisher routes that need it. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies.",
+    "shortDescription": "Search selected protocol publishers safely.",
+    "longDescription": "Choose publishers, suppliers, and REBASE with individual skill toggles, then search only the enabled sources through the hosted Labee service. A thin local stdio bridge forwards MCP calls and offers an explicitly enabled residential exit only for publisher routes that need it. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies.",
     "developerName": "Labee",
     "category": "Productivity",
     "capabilities": [
@@ -30,7 +30,7 @@
     "websiteURL": "https://github.com/mengbingrock/Labee-Protocol-Searcher",
     "defaultPrompt": [
       "Find an NEB protocol and retrieve it with Codex's integrated Browser.",
-      "Search protocol journals for an open full-text method.",
+      "Search my enabled publishers for an open full-text method.",
       "Fetch a journal article, reusing my connected Chrome session only if native retrieval fails."
     ]
   }

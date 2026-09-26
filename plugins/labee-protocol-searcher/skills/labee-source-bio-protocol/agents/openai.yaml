@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Bio-protocol"
+  short_description: "Include Bio-protocol in Labee searches"
+  default_prompt: "Use $labee-source-bio-protocol when searching this Labee source."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · IDT"
+  short_description: "Include IDT in Labee searches"
+  default_prompt: "Use $labee-source-idt when searching this Labee source."

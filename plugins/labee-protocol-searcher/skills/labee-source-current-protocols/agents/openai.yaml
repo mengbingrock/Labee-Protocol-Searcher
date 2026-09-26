@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Current Protocols"
+  short_description: "Include Current Protocols in Labee searches"
+  default_prompt: "Use $labee-source-current-protocols when searching this Labee source."
