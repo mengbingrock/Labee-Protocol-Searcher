@@ -1,6 +1,6 @@
 {
   "name": "labee-protocol-searcher",
-  "version": "0.6.0+codex.20260926025157",
+  "version": "0.6.0+codex.20260926032940",
   "description": "Search selected laboratory-protocol publishers through the hosted MCP service, with per-source toggles and safe browser-assisted retrieval.",
   "author": {
     "name": "Labee",
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Labee Protocol Searcher",
     "shortDescription": "Search selected protocol publishers safely.",
-    "longDescription": "Choose publishers, suppliers, and REBASE with individual skill toggles, then search only the enabled sources through the hosted Labee service. The plugin connects directly to Labee over authenticated HTTPS, without downloading an npm package at startup. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies.",
+    "longDescription": "Choose publishers, suppliers, and REBASE with individual skill toggles, then search only the enabled sources through the hosted Labee service. The self-contained local bridge forwards authenticated MCP calls without npm at startup and can keep an explicitly consented residential publisher proxy connected. New Labee accounts receive introductory search credit. NEB capture uses Codex's integrated Browser; explicitly authorized journal fallback can reuse a connected Chrome session without exposing cookies.",
     "developerName": "Labee",
     "category": "Productivity",
     "capabilities": [

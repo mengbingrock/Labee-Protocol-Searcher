@@ -25,7 +25,7 @@ const INIT = JSON.stringify({
 
 describe("remote MCP stdio proxy", () => {
   it("defaults to the deployed endpoint and accepts only HTTPS or loopback HTTP", () => {
-    expect(remoteMcpConfig({}).url).toBe("https://labee.online/mcp");
+    expect(remoteMcpConfig({}).url).toBe("https://labee.online/api/protocols/mcp");
     expect(assertRemoteMcpUrl("http://127.0.0.1:3001/mcp")).toBe("http://127.0.0.1:3001/mcp");
     expect(() => assertRemoteMcpUrl("http://example.com/mcp")).toThrow(/HTTPS/);
     expect(() => assertRemoteMcpUrl("https://user:pass@example.com/mcp")).toThrow(/credentials/);

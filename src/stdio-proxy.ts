@@ -14,8 +14,9 @@ import {
   RESIDENTIAL_OFFER_HEADER,
   type ResidentialOffer,
 } from "./residential.ts";
+import { LabeeOAuthClient } from "./labee-oauth.ts";
 
-export const DEFAULT_REMOTE_MCP_URL = "https://labee.online/mcp";
+export const DEFAULT_REMOTE_MCP_URL = "https://labee.online/api/protocols/mcp";
 const DEFAULT_REMOTE_TIMEOUT_MS = 300_000;
 const TRANSPORT_ERROR_CODE = -32002;
 
@@ -27,6 +28,7 @@ export interface RemoteMcpConfig {
 
 export interface RemoteMcpClientOptions {
   fetchImpl?: typeof fetch;
+  tokenProvider?: () => Promise<string | undefined>;
 }
 
 function optional(value: string | undefined): string | undefined {
@@ -150,6 +152,7 @@ function remoteErrorMessage(status: number, body: string): string {
 /** Sessionless today, but preserves MCP session/version headers for compatible remotes. */
 export class RemoteMcpClient {
   private readonly fetchImpl: typeof fetch;
+  private readonly tokenProvider: (() => Promise<string | undefined>) | undefined;
   private protocolVersion: string | undefined;
   private sessionId: string | undefined;
 
@@ -158,6 +161,7 @@ export class RemoteMcpClient {
     options: RemoteMcpClientOptions = {},
   ) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.tokenProvider = options.tokenProvider;
   }
 
   public async forward(raw: string, offer: ResidentialOffer | null = null): Promise<string | null> {
@@ -168,7 +172,8 @@ export class RemoteMcpClient {
         accept: "application/json, text/event-stream",
         "content-type": "application/json",
       };
-      if (this.config.token) headers.authorization = `Bearer ${this.config.token}`;
+      const token = this.config.token ?? await this.tokenProvider?.();
+      if (token) headers.authorization = `Bearer ${token}`;
       if (this.protocolVersion) headers["mcp-protocol-version"] = this.protocolVersion;
       if (this.sessionId) headers["mcp-session-id"] = this.sessionId;
       if (offer) headers[RESIDENTIAL_OFFER_HEADER] = encodeResidentialOffer(offer);
@@ -212,6 +217,7 @@ interface StdioOutput {
 }
 
 export interface StdioProxyOptions {
+  auth?: LabeeOAuthClient;
   client?: RemoteMcpClient;
   input?: StdioInput;
   log?: (message: string) => void;
@@ -226,7 +232,11 @@ function configuredResidentialReadyTimeout(): number {
 
 /** Start the local stdio-to-remote HTTP bridge. Resolves after stdin and in-flight calls drain. */
 export function runStdioProxy(options: StdioProxyOptions = {}): Promise<void> {
-  const client = options.client ?? new RemoteMcpClient(remoteMcpConfig());
+  const config = remoteMcpConfig();
+  const auth = options.auth ?? new LabeeOAuthClient({ resource: config.url });
+  const client = options.client ?? new RemoteMcpClient(config, {
+    tokenProvider: () => auth.accessToken(),
+  });
   const input = options.input ?? (process.stdin as unknown as StdioInput);
   const output = options.output ?? process.stdout;
   const log = options.log ?? ((message: string) => process.stderr.write(`${message}\n`));
@@ -247,12 +257,68 @@ export function runStdioProxy(options: StdioProxyOptions = {}): Promise<void> {
       pending++;
       void (async () => {
         try {
+          const parsed = parseJson(line) as {
+            id?: string | number | null;
+            method?: unknown;
+            params?: { name?: unknown; arguments?: { action?: unknown } };
+          } | undefined;
+          if (parsed?.method === "tools/call" && parsed.params?.name === "labee_auth") {
+            const action = parsed.params.arguments?.action;
+            let text: string;
+            let structuredContent: Record<string, unknown>;
+            if (action === "disconnect") {
+              await auth.disconnect();
+              text = "Disconnected this plugin from Labee.";
+              structuredContent = { ...auth.status() };
+            } else if (action === "status") {
+              structuredContent = { ...auth.status() };
+              text = structuredContent.authenticated
+                ? "This plugin is connected to Labee."
+                : "This plugin is not connected to Labee.";
+            } else {
+              const authorizationUrl = await auth.beginAuthorization();
+              structuredContent = { ...auth.status(), authorizationUrl };
+              text = "Open this Labee sign-in link, create an account or sign in, approve access, " +
+                `then return to Codex:\n\n${authorizationUrl}`;
+            }
+            output.write(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: parsed.id ?? null,
+              result: { content: [{ type: "text", text }], structuredContent },
+            })}\n`);
+            return;
+          }
           let offer: ResidentialOffer | null = null;
           if (messageMayNeedResidential(line)) {
             await awaitResidentialReady(readyTimeout);
             offer = activeResidentialOffer();
           }
-          const response = await client.forward(line, offer);
+          let response = await client.forward(line, offer);
+          if (response && parsed?.method === "tools/list") {
+            const value = parseJson(response) as { result?: { tools?: unknown[] } } | undefined;
+            if (Array.isArray(value?.result?.tools)) {
+              value.result.tools.push({
+                name: "labee_auth",
+                title: "Connect or disconnect a Labee account",
+                description:
+                  "Connect this plugin to labee.online with OAuth, check connection status, or disconnect. " +
+                  "New accounts receive introductory search credit.",
+                annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
+                securitySchemes: [{ type: "noauth" }],
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    action: {
+                      type: "string",
+                      enum: ["connect", "status", "disconnect"],
+                      default: "connect",
+                    },
+                  },
+                },
+              });
+              response = JSON.stringify(value);
+            }
+          }
           if (response) output.write(`${response}\n`);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Remote MCP request failed";

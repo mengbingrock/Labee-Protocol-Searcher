@@ -23,6 +23,7 @@ import { describeNetworkContext, detectNetworkContext } from "./network-context.
 import { fetchResourceWithBrowser } from "./agent/browser-fetch.ts";
 import { browserAdapterForMode, shutdownDefaultBrowser } from "./agent/default-browser.ts";
 import { startResidentialAgent } from "./residential.ts";
+import { loadLocalResidentialConfig } from "./local-config.ts";
 
 interface CliArgs {
   query?: string;
@@ -180,6 +181,10 @@ if (args.query !== undefined || args.fetchId !== undefined || args.listSources) 
   // Its sole local capability is the opt-in residential agent. The agent keeps
   // an outbound encrypted control channel ready, while actual publisher bytes
   // use it only when the remote publisher policy selects it or needs a retry.
+  const localConfig = loadLocalResidentialConfig();
+  if (localConfig.warning) {
+    process.stderr.write(`[labee-protocol-searcher] ${localConfig.warning}\n`);
+  }
   const residential = startResidentialAgent();
   Promise.resolve()
     .then(() => runStdioProxy())

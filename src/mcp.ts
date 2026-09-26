@@ -59,6 +59,10 @@ const SERVER_INSTRUCTIONS =
   "explicit fetch(browser=chrome) returns a chromeBrowserTask. Reuse the connected Chrome session without " +
   "reading cookies, verify the DOI/title, capture article HTML or downloaded-PDF text, and call " +
   "chrome_fetch_commit. Treat that capture as entitled content, not open-access content.";
+const OPTIONAL_LABEE_AUTH = [
+  { type: "noauth" },
+  { type: "oauth2", scopes: ["protocols:search"] },
+] as const;
 /** Search-to-fetch browser handoff for the lifetime of the authoritative MCP process. */
 const sameProfileBrowserById = new Map<string, "cdp" | "default">();
 
@@ -79,6 +83,8 @@ export interface JsonRpcResponse {
 export const TOOLS = [
   {
     name: "search",
+    securitySchemes: OPTIONAL_LABEE_AUTH,
+    _meta: { securitySchemes: OPTIONAL_LABEE_AUTH },
     title: "Search protocols, reagents & enzymes",
     // Read-only, queries the open web, results vary over time → not idempotent.
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
@@ -166,6 +172,8 @@ export const TOOLS = [
   },
   {
     name: "fetch",
+    securitySchemes: OPTIONAL_LABEE_AUTH,
+    _meta: { securitySchemes: OPTIONAL_LABEE_AUTH },
     title: "Fetch a result's content by id",
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
