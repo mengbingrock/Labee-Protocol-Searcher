@@ -84,8 +84,12 @@ export const TOOLS = [
   {
     name: "search",
     securitySchemes: OPTIONAL_LABEE_AUTH,
-    _meta: { securitySchemes: OPTIONAL_LABEE_AUTH },
-    title: "Search protocols, reagents & enzymes",
+    _meta: {
+      securitySchemes: OPTIONAL_LABEE_AUTH,
+      "openai/toolInvocation/invoking": "Searching Labee sources…",
+      "openai/toolInvocation/invoked": "Labee search results ready",
+    },
+    title: "Search Labee protocols, reagents & enzymes",
     // Read-only, queries the open web, results vary over time → not idempotent.
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
@@ -135,6 +139,42 @@ export const TOOLS = [
       },
       required: ["query"],
     },
+    outputSchema: {
+      type: "object",
+      properties: {
+        artifact: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["labee.search"] },
+            request: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+                sources: { type: "array", items: { type: "string" } },
+                sourceSelection: { type: "string", enum: ["explicit", "all"] },
+                limit: { type: "number" },
+                browser: { type: "string" },
+              },
+              required: ["query", "sources", "sourceSelection", "limit", "browser"],
+            },
+            summary: {
+              type: "object",
+              properties: {
+                resultCount: { type: "number" },
+                sourceCount: { type: "number" },
+                partial: { type: "boolean" },
+              },
+              required: ["resultCount", "sourceCount", "partial"],
+            },
+            sources: { type: "array", items: { type: "object" } },
+            results: { type: "array", items: { type: "object" } },
+            hostBrowserTask: { type: "object" },
+          },
+          required: ["kind", "request", "summary", "sources", "results"],
+        },
+      },
+      required: ["artifact"],
+    },
   },
   {
     name: "neb_search_commit",
@@ -173,8 +213,12 @@ export const TOOLS = [
   {
     name: "fetch",
     securitySchemes: OPTIONAL_LABEE_AUTH,
-    _meta: { securitySchemes: OPTIONAL_LABEE_AUTH },
-    title: "Fetch a result's content by id",
+    _meta: {
+      securitySchemes: OPTIONAL_LABEE_AUTH,
+      "openai/toolInvocation/invoking": "Fetching Labee result details…",
+      "openai/toolInvocation/invoked": "Labee fetch complete",
+    },
+    title: "Fetch Labee result details",
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
       "Retrieve the content of one or more `search` results by id. `rebase:<enzyme>` returns the " +
@@ -230,6 +274,41 @@ export const TOOLS = [
             "uses native retrieval.",
         },
       },
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        artifact: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["labee.fetch"] },
+            request: {
+              type: "object",
+              properties: {
+                ids: { type: "array", items: { type: "string" } },
+                section: { type: "string" },
+                browser: { type: "string" },
+              },
+              required: ["ids", "browser"],
+            },
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  status: { type: "string" },
+                  reason: { type: "string" },
+                  characters: { type: "number" },
+                },
+                required: ["id", "status", "characters"],
+              },
+            },
+          },
+          required: ["kind", "request", "items"],
+        },
+      },
+      required: ["artifact"],
     },
   },
   {
@@ -294,6 +373,96 @@ function toolText(text: string, isError = false): unknown {
   return { content: [{ type: "text", text }], isError };
 }
 
+interface SearchArtifactRequest {
+  query: string;
+  sources: string[];
+  sourceSelection: "explicit" | "all";
+  limit: number;
+  browser: string;
+}
+
+interface FetchArtifactRequest {
+  ids: string[];
+  section?: string;
+  browser: string;
+}
+
+function toolArtifact(text: string, artifact: Record<string, unknown>): unknown {
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: { artifact },
+    isError: false,
+  };
+}
+
+function requestBlock(title: string, request: object): string {
+  return [
+    `## ${title}`,
+    "",
+    "```json",
+    JSON.stringify(request, null, 2),
+    "```",
+  ].join("\n");
+}
+
+function searchArtifact(
+  response: Awaited<ReturnType<typeof search>>,
+  request: SearchArtifactRequest,
+  hostBrowserTask?: object,
+): Record<string, unknown> {
+  return {
+    kind: "labee.search",
+    request,
+    summary: {
+      resultCount: response.results.length,
+      sourceCount: response.sources.length,
+      partial: response.partial,
+    },
+    sources: response.sources,
+    results: response.results,
+    ...(hostBrowserTask ? { hostBrowserTask } : {}),
+  };
+}
+
+function fetchMarker(text: string, name: "status" | "reason"): string | undefined {
+  const match = new RegExp(`_${name}:\\s*([^_\\n]+)_`, "i").exec(text);
+  return match?.[1]?.trim();
+}
+
+function fetchResult(
+  rows: Array<{ id: string; text: string }>,
+  request: FetchArtifactRequest,
+): unknown {
+  const items = rows.map((row) => ({
+    id: row.id,
+    status: fetchMarker(row.text, "status") ?? "unknown",
+    ...(fetchMarker(row.text, "reason") ? { reason: fetchMarker(row.text, "reason") } : {}),
+    characters: row.text.length,
+  }));
+  const details = items.map((item) =>
+    `- \`${item.id}\`: status=\`${item.status}\`` +
+      (`reason` in item ? ` · reason=\`${item.reason}\`` : "") +
+      ` · ${item.characters} characters`,
+  );
+  const content = rows.length === 1
+    ? rows[0]!.text
+    : rows.map((row) => `# ${row.id}\n\n${row.text}`).join("\n\n---\n\n");
+  return toolArtifact(
+    [
+      requestBlock("Fetch parameters", request),
+      "",
+      "## Fetch details",
+      "",
+      ...details,
+      "",
+      "## Retrieved content",
+      "",
+      content,
+    ].join("\n"),
+    { kind: "labee.fetch", request, items },
+  );
+}
+
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   if (name === "list_sources") {
     // Read the grade off the source rather than inferring it from `kind` — some
@@ -333,10 +502,18 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     const sources = Array.isArray(args.sources)
       ? args.sources.filter((x): x is string => typeof x === "string")
       : undefined;
-    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    const requestedLimit = typeof args.limit === "number" ? args.limit : undefined;
+    const limit = Math.max(1, Math.min(10, Math.floor(requestedLimit ?? 5)));
     const browserMode = ["off", "cdp", "default", "host"].includes(String(args.browser))
       ? (args.browser as "off" | "cdp" | "default" | "host")
       : undefined;
+    const request: SearchArtifactRequest = {
+      query: query.trim(),
+      sources: sources ?? [],
+      sourceSelection: sources ? "explicit" : "all",
+      limit,
+      browser: browserMode ?? "browserless-default",
+    };
     const wantsNeb = sources
       ? sources.some((source) => source.trim().toLowerCase() === "neb")
       : true;
@@ -350,21 +527,23 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       const base = nonNebSources.length > 0
         ? await search(query, {
             sources: nonNebSources,
-            ...(limit !== undefined ? { limit } : {}),
+            limit,
           })
         : { query: query.trim(), results: [], sources: [], unknownSources: [], partial: false };
-      const task = prepareHostBrowserSearch(query, limit ?? 5, base);
-      return toolText([
+      const task = prepareHostBrowserSearch(query, limit, base);
+      return toolArtifact([
+        requestBlock("Search parameters", request),
+        "",
         ...(base.sources.length > 0 ? [renderSearch(base), ""] : []),
         "_status: host-browser-required_",
         "",
         "hostBrowserTask:",
         JSON.stringify(task, null, 2),
-      ].join("\n"));
+      ].join("\n"), searchArtifact(base, request, task));
     }
     const resp = await search(query, {
       ...(sources ? { sources } : {}),
-      ...(limit !== undefined ? { limit } : {}),
+      limit,
     });
     const browser = browserAdapterForMode(browserMode === "host" ? undefined : browserMode);
     const captures: string[] = [];
@@ -392,10 +571,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         }
       }
     }
-    return toolText([
+    return toolArtifact([
+      requestBlock("Search parameters", request),
+      "",
       renderSearch(resp),
       ...(captures.length > 0 ? ["", "Same-profile NEB browser capture:", ...captures] : []),
-    ].join("\n"));
+    ].join("\n"), searchArtifact(resp, request));
   }
   if (name === "neb_search_commit") {
     const captureId = typeof args.captureId === "string" ? args.captureId : "";
@@ -448,21 +629,28 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     const browserMode = requestedBrowserMode === "off"
       ? "off"
       : requestedBrowserMode ?? inheritedBrowserMode;
+    const request: FetchArtifactRequest = {
+      ids: list,
+      ...(section ? { section } : {}),
+      browser: browserMode ?? "automatic",
+    };
     if (browserMode === "chrome") {
       if (list.length === 1) {
         const captured = fetchHostBrowserCapture(list[0]!);
-        return toolText(captured ?? await fetchResourceWithChromeSessionFallback(list[0]!, opts));
+        const text = captured ?? await fetchResourceWithChromeSessionFallback(list[0]!, opts);
+        return fetchResult([{ id: list[0]!, text }], request);
       }
       const rows = await Promise.all(list.map(async (id) => ({
         id,
         text: fetchHostBrowserCapture(id) ?? await fetchResourceWithChromeSessionFallback(id, opts),
       })));
-      return toolText(rows.map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+      return fetchResult(rows, request);
     }
     const browser = browserAdapterForMode(browserMode === "host" ? undefined : browserMode);
     if (list.length === 1) {
       const captured = fetchHostBrowserCapture(list[0]!);
-      return toolText(captured ?? await fetchResourceWithBrowser(list[0]!, opts, browser));
+      const text = captured ?? await fetchResourceWithBrowser(list[0]!, opts, browser);
+      return fetchResult([{ id: list[0]!, text }], request);
     }
     const capturedRows = list.map((id) => ({ id, text: fetchHostBrowserCapture(id) }));
     const rows = capturedRows.every((row) => row.text === undefined)
@@ -471,7 +659,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
           id: row.id,
           text: row.text ?? await fetchResourceWithBrowser(row.id, opts, browser),
         })));
-    return toolText(rows.map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+    return fetchResult(rows, request);
   }
   if (name === "browser_launch") {
     return toolText(JSON.stringify(await defaultBrowser().launch(), null, 2));

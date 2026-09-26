@@ -8994,8 +8994,12 @@ const TOOLS = [
 	{
 		name: "search",
 		securitySchemes: OPTIONAL_LABEE_AUTH,
-		_meta: { securitySchemes: OPTIONAL_LABEE_AUTH },
-		title: "Search protocols, reagents & enzymes",
+		_meta: {
+			securitySchemes: OPTIONAL_LABEE_AUTH,
+			"openai/toolInvocation/invoking": "Searching Labee sources…",
+			"openai/toolInvocation/invoked": "Labee search results ready"
+		},
+		title: "Search Labee protocols, reagents & enzymes",
 		annotations: {
 			readOnlyHint: true,
 			openWorldHint: true,
@@ -9033,6 +9037,71 @@ const TOOLS = [
 				}
 			},
 			required: ["query"]
+		},
+		outputSchema: {
+			type: "object",
+			properties: { artifact: {
+				type: "object",
+				properties: {
+					kind: {
+						type: "string",
+						enum: ["labee.search"]
+					},
+					request: {
+						type: "object",
+						properties: {
+							query: { type: "string" },
+							sources: {
+								type: "array",
+								items: { type: "string" }
+							},
+							sourceSelection: {
+								type: "string",
+								enum: ["explicit", "all"]
+							},
+							limit: { type: "number" },
+							browser: { type: "string" }
+						},
+						required: [
+							"query",
+							"sources",
+							"sourceSelection",
+							"limit",
+							"browser"
+						]
+					},
+					summary: {
+						type: "object",
+						properties: {
+							resultCount: { type: "number" },
+							sourceCount: { type: "number" },
+							partial: { type: "boolean" }
+						},
+						required: [
+							"resultCount",
+							"sourceCount",
+							"partial"
+						]
+					},
+					sources: {
+						type: "array",
+						items: { type: "object" }
+					},
+					results: {
+						type: "array",
+						items: { type: "object" }
+					},
+					hostBrowserTask: { type: "object" }
+				},
+				required: [
+					"kind",
+					"request",
+					"summary",
+					"sources",
+					"results"
+				]
+			} },
+			required: ["artifact"]
 		}
 	},
 	{
@@ -9087,8 +9156,12 @@ const TOOLS = [
 	{
 		name: "fetch",
 		securitySchemes: OPTIONAL_LABEE_AUTH,
-		_meta: { securitySchemes: OPTIONAL_LABEE_AUTH },
-		title: "Fetch a result's content by id",
+		_meta: {
+			securitySchemes: OPTIONAL_LABEE_AUTH,
+			"openai/toolInvocation/invoking": "Fetching Labee result details…",
+			"openai/toolInvocation/invoked": "Labee fetch complete"
+		},
+		title: "Fetch Labee result details",
 		annotations: {
 			readOnlyHint: true,
 			openWorldHint: true,
@@ -9123,6 +9196,53 @@ const TOOLS = [
 					description: "Optional browser recovery. `host` reads a capture committed from Codex's integrated Browser; `default` uses Labee's AppleScript window; `cdp` connects to PROTOCOLS_BROWSER_CDP_URL; `chrome` prepares an explicit plugin handoff that reuses Codex's connected Chrome session without reading cookies; `off` uses native retrieval."
 				}
 			}
+		},
+		outputSchema: {
+			type: "object",
+			properties: { artifact: {
+				type: "object",
+				properties: {
+					kind: {
+						type: "string",
+						enum: ["labee.fetch"]
+					},
+					request: {
+						type: "object",
+						properties: {
+							ids: {
+								type: "array",
+								items: { type: "string" }
+							},
+							section: { type: "string" },
+							browser: { type: "string" }
+						},
+						required: ["ids", "browser"]
+					},
+					items: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: {
+								id: { type: "string" },
+								status: { type: "string" },
+								reason: { type: "string" },
+								characters: { type: "number" }
+							},
+							required: [
+								"id",
+								"status",
+								"characters"
+							]
+						}
+					}
+				},
+				required: [
+					"kind",
+					"request",
+					"items"
+				]
+			} },
+			required: ["artifact"]
 		}
 	},
 	{
@@ -9235,6 +9355,67 @@ function toolText(text, isError = false) {
 		isError
 	};
 }
+function toolArtifact(text, artifact) {
+	return {
+		content: [{
+			type: "text",
+			text
+		}],
+		structuredContent: { artifact },
+		isError: false
+	};
+}
+function requestBlock(title, request) {
+	return [
+		`## ${title}`,
+		"",
+		"```json",
+		JSON.stringify(request, null, 2),
+		"```"
+	].join("\n");
+}
+function searchArtifact(response, request, hostBrowserTask) {
+	return {
+		kind: "labee.search",
+		request,
+		summary: {
+			resultCount: response.results.length,
+			sourceCount: response.sources.length,
+			partial: response.partial
+		},
+		sources: response.sources,
+		results: response.results,
+		...hostBrowserTask ? { hostBrowserTask } : {}
+	};
+}
+function fetchMarker(text, name) {
+	return new RegExp(`_${name}:\\s*([^_\\n]+)_`, "i").exec(text)?.[1]?.trim();
+}
+function fetchResult(rows, request) {
+	const items = rows.map((row) => ({
+		id: row.id,
+		status: fetchMarker(row.text, "status") ?? "unknown",
+		...fetchMarker(row.text, "reason") ? { reason: fetchMarker(row.text, "reason") } : {},
+		characters: row.text.length
+	}));
+	const details = items.map((item) => `- \`${item.id}\`: status=\`${item.status}\`` + (`reason` in item ? ` · reason=\`${item.reason}\`` : "") + ` · ${item.characters} characters`);
+	const content = rows.length === 1 ? rows[0].text : rows.map((row) => `# ${row.id}\n\n${row.text}`).join("\n\n---\n\n");
+	return toolArtifact([
+		requestBlock("Fetch parameters", request),
+		"",
+		"## Fetch details",
+		"",
+		...details,
+		"",
+		"## Retrieved content",
+		"",
+		content
+	].join("\n"), {
+		kind: "labee.fetch",
+		request,
+		items
+	});
+}
 async function callTool(name, args) {
 	if (name === "list_sources") {
 		const FETCH_NOTE = {
@@ -9259,19 +9440,27 @@ async function callTool(name, args) {
 		const query = typeof args.query === "string" ? args.query : "";
 		if (!query.trim()) return toolText("Error: `query` is required.", true);
 		const sources = Array.isArray(args.sources) ? args.sources.filter((x) => typeof x === "string") : void 0;
-		const limit = typeof args.limit === "number" ? args.limit : void 0;
+		const requestedLimit = typeof args.limit === "number" ? args.limit : void 0;
+		const limit = Math.max(1, Math.min(10, Math.floor(requestedLimit ?? 5)));
 		const browserMode = [
 			"off",
 			"cdp",
 			"default",
 			"host"
 		].includes(String(args.browser)) ? args.browser : void 0;
+		const request = {
+			query: query.trim(),
+			sources: sources ?? [],
+			sourceSelection: sources ? "explicit" : "all",
+			limit,
+			browser: browserMode ?? "browserless-default"
+		};
 		const wantsNeb = sources ? sources.some((source) => source.trim().toLowerCase() === "neb") : true;
 		if (browserMode === "host" && wantsNeb) {
 			const nonNebSources = sources ? sources.filter((source) => source.trim().toLowerCase() !== "neb") : [...VENDOR_IDS.filter((source) => source !== "neb"), ...looksLikeEnzymeQuery(query) ? ["rebase"] : []];
 			const base = nonNebSources.length > 0 ? await search(query, {
 				sources: nonNebSources,
-				...limit !== void 0 ? { limit } : {}
+				limit
 			}) : {
 				query: query.trim(),
 				results: [],
@@ -9279,18 +9468,20 @@ async function callTool(name, args) {
 				unknownSources: [],
 				partial: false
 			};
-			const task = prepareHostBrowserSearch(query, limit ?? 5, base);
-			return toolText([
+			const task = prepareHostBrowserSearch(query, limit, base);
+			return toolArtifact([
+				requestBlock("Search parameters", request),
+				"",
 				...base.sources.length > 0 ? [renderSearch(base), ""] : [],
 				"_status: host-browser-required_",
 				"",
 				"hostBrowserTask:",
 				JSON.stringify(task, null, 2)
-			].join("\n"));
+			].join("\n"), searchArtifact(base, request, task));
 		}
 		const resp = await search(query, {
 			...sources ? { sources } : {},
-			...limit !== void 0 ? { limit } : {}
+			limit
 		});
 		const browser = browserAdapterForMode(browserMode === "host" ? void 0 : browserMode);
 		const captures = [];
@@ -9311,11 +9502,16 @@ async function callTool(name, args) {
 				if (hit.status === "interaction-required") break;
 			}
 		}
-		return toolText([renderSearch(resp), ...captures.length > 0 ? [
+		return toolArtifact([
+			requestBlock("Search parameters", request),
 			"",
-			"Same-profile NEB browser capture:",
-			...captures
-		] : []].join("\n"));
+			renderSearch(resp),
+			...captures.length > 0 ? [
+				"",
+				"Same-profile NEB browser capture:",
+				...captures
+			] : []
+		].join("\n"), searchArtifact(resp, request));
 	}
 	if (name === "neb_search_commit") {
 		const captureId = typeof args.captureId === "string" ? args.captureId : "";
@@ -9363,23 +9559,40 @@ async function callTool(name, args) {
 		if (list.length === 0) return toolText("Error: `id` (or `ids`) is required.", true);
 		const inheritedBrowserMode = list.map((id) => sameProfileBrowserById.get(id)).find((mode) => Boolean(mode));
 		const browserMode = requestedBrowserMode === "off" ? "off" : requestedBrowserMode ?? inheritedBrowserMode;
+		const request = {
+			ids: list,
+			...section ? { section } : {},
+			browser: browserMode ?? "automatic"
+		};
 		if (browserMode === "chrome") {
-			if (list.length === 1) return toolText(fetchHostBrowserCapture(list[0]) ?? await fetchResourceWithChromeSessionFallback(list[0], opts));
-			return toolText((await Promise.all(list.map(async (id) => ({
+			if (list.length === 1) {
+				const text = fetchHostBrowserCapture(list[0]) ?? await fetchResourceWithChromeSessionFallback(list[0], opts);
+				return fetchResult([{
+					id: list[0],
+					text
+				}], request);
+			}
+			return fetchResult(await Promise.all(list.map(async (id) => ({
 				id,
 				text: fetchHostBrowserCapture(id) ?? await fetchResourceWithChromeSessionFallback(id, opts)
-			})))).map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+			}))), request);
 		}
 		const browser = browserAdapterForMode(browserMode === "host" ? void 0 : browserMode);
-		if (list.length === 1) return toolText(fetchHostBrowserCapture(list[0]) ?? await fetchResourceWithBrowser(list[0], opts, browser));
+		if (list.length === 1) {
+			const text = fetchHostBrowserCapture(list[0]) ?? await fetchResourceWithBrowser(list[0], opts, browser);
+			return fetchResult([{
+				id: list[0],
+				text
+			}], request);
+		}
 		const capturedRows = list.map((id) => ({
 			id,
 			text: fetchHostBrowserCapture(id)
 		}));
-		return toolText((capturedRows.every((row) => row.text === void 0) ? await fetchResourcesWithBrowser(list, opts, browser) : await Promise.all(capturedRows.map(async (row) => ({
+		return fetchResult(capturedRows.every((row) => row.text === void 0) ? await fetchResourcesWithBrowser(list, opts, browser) : await Promise.all(capturedRows.map(async (row) => ({
 			id: row.id,
 			text: row.text ?? await fetchResourceWithBrowser(row.id, opts, browser)
-		})))).map((r) => `# ${r.id}\n\n${r.text}`).join("\n\n---\n\n"));
+		}))), request);
 	}
 	if (name === "browser_launch") return toolText(JSON.stringify(await defaultBrowser().launch(), null, 2));
 	if (name === "browser_status") return toolText(JSON.stringify(defaultBrowser().status(), null, 2));

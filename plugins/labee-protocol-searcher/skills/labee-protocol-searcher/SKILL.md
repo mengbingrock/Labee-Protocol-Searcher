@@ -24,6 +24,14 @@ Before every Labee `search` call:
 
 Source toggles are workflow preferences, not authorization controls. Do not claim that disabling a selector revokes access to the underlying public source.
 
+## Visible execution details
+
+Before every Labee `search` call, tell the user the exact parameters in one concise line: `query`, `sources`, `limit`, and `browser`. Spell out that an omitted browser means Labee's default AWS Browserless route. Do not use a generic message such as “Searching” when the parameters are known.
+
+Before every Labee `fetch` call, tell the user the exact `id` or `ids`, optional `section`, and `browser` mode. After the call, report each returned id's `_status`, `_reason` when present, and whether the response contains full text, an abstract, or only a link.
+
+Treat `structuredContent.artifact` returned by `search` and `fetch` as the canonical machine-readable artifact. Use its request, summary, result ids, source routes, and fetch details when presenting the outcome. Do not hide the artifact behind a generic success sentence.
+
 ## Browser preference
 
 For most browser tasks, prefer Codex's integrated Browser. It keeps browsing inside Codex, uses a separate profile, and provides a shared view. It is especially suitable for public websites, research, and localhost testing.

@@ -77,6 +77,14 @@ describe("MCP dispatch", () => {
       .toContain("Prefer Codex's integrated Browser");
     expect(TOOLS.find((tool) => tool.name === "search")?.description)
       .toContain("Do not silently switch to system Chrome");
+    expect(TOOLS.find((tool) => tool.name === "search")?._meta)
+      .toMatchObject({ "openai/toolInvocation/invoking": "Searching Labee sources…" });
+    expect(TOOLS.find((tool) => tool.name === "fetch")?._meta)
+      .toMatchObject({ "openai/toolInvocation/invoking": "Fetching Labee result details…" });
+    expect(TOOLS.find((tool) => tool.name === "search")?.outputSchema)
+      .toMatchObject({ required: ["artifact"] });
+    expect(TOOLS.find((tool) => tool.name === "fetch")?.outputSchema)
+      .toMatchObject({ required: ["artifact"] });
   });
 
   it("reports default-browser status without launching it", async () => {
@@ -149,6 +157,22 @@ describe("MCP dispatch", () => {
       expect(content[0]!.type).toBe("text");
       expect(content[0]!.text).toContain("Gibson Assembly Protocol");
       expect(content[0]!.text).toContain("url:https://www.neb.com/x");
+      expect(content[0]!.text).toContain("## Search parameters");
+      expect(content[0]!.text).toContain('"browser": "browserless-default"');
+      const artifact = (res!.result as {
+        structuredContent: { artifact: Record<string, unknown> };
+      }).structuredContent.artifact;
+      expect(artifact).toMatchObject({
+        kind: "labee.search",
+        request: {
+          query: "gibson assembly",
+          sources: [],
+          sourceSelection: "all",
+          limit: 5,
+          browser: "browserless-default",
+        },
+        summary: { resultCount: 1, sourceCount: 1, partial: false },
+      });
     });
 
     it("delegates NEB search to the host browser and serves committed HTML from cache", async () => {
@@ -164,7 +188,8 @@ describe("MCP dispatch", () => {
       const preparedText = (prepared!.result as { content: { text: string }[] }).content[0]!.text;
       expect(preparedText).toContain("_status: host-browser-required_");
       expect(search.search).not.toHaveBeenCalled();
-      const task = JSON.parse(preparedText.slice(preparedText.indexOf("{")).trim()) as {
+      const taskMarker = "hostBrowserTask:\n";
+      const task = JSON.parse(preparedText.slice(preparedText.indexOf(taskMarker) + taskMarker.length).trim()) as {
         captureId: string;
         searchUrl: string;
       };
@@ -221,6 +246,20 @@ describe("MCP dispatch", () => {
       const text = (res!.result as { content: { text: string }[] }).content[0]!.text;
       expect(text).toContain("mailto:orders@neb.com");
       expect(text).toContain("_status: not-fetchable_");
+      expect(text).toContain("## Fetch parameters");
+      expect(text).toContain("## Fetch details");
+      const artifact = (res!.result as {
+        structuredContent: { artifact: Record<string, unknown> };
+      }).structuredContent.artifact;
+      expect(artifact).toMatchObject({
+        kind: "labee.fetch",
+        request: { ids: ["url:mailto:orders@neb.com"], browser: "automatic" },
+        items: [{
+          id: "url:mailto:orders@neb.com",
+          status: "not-fetchable",
+          characters: expect.any(Number),
+        }],
+      });
     });
 
     it("errors when id is missing", async () => {
