@@ -230,6 +230,11 @@ describe("summarize", () => {
     expect(renderBlock(apiReport)).toContain("protocols.io native API");
     expect(renderBlock(apiReport)).not.toContain("fallback · `protocols-io-api`");
   });
+  it("counts direct Morimoto Lab catalog discovery as publisher search", () => {
+    const catalogReport = { ...report, sources: [{ id: "morimoto-lab", count: 3, searchRoute: "morimoto-lab-catalog", fetchStatus: "ok", drift: "" }] };
+    expect(summarize(catalogReport)).toMatchObject({ publisherSearches: 1, publisherSources: 1 });
+    expect(renderBlock(catalogReport)).toContain("Morimoto Lab PDF catalog");
+  });
   it("counts configured backends separately from unconfigured ones", () => {
     const row = summarize(report);
     // 3 providers, one of them unconfigured: 1 up out of 2 configured.

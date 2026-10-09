@@ -1,0 +1,4 @@
+interface:
+  display_name: "Labee Source · Morimoto Lab"
+  short_description: "Include Morimoto Lab protocols in Labee searches"
+  default_prompt: "Use $labee-source-morimoto-lab when searching this Labee source."

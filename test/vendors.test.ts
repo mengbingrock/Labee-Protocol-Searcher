@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { VENDORS, VENDOR_IDS, getVendor, resolveVendors } from "../src/vendors.ts";
+import { VENDORS, VENDOR_IDS, PRIORITY_SOURCE_IDS, getVendor, resolveVendors } from "../src/vendors.ts";
 import {
   parseProtocolsIoSearchOptions,
   protocolsIoSearchUrl,
@@ -20,6 +20,7 @@ describe("vendor registry", () => {
       "idt",
       "star-protocols",
       "nature-protocols",
+      "protocols-io", "jove", "morimoto-lab",
     ]) {
       expect(VENDOR_IDS, id).toContain(id);
     }
@@ -31,7 +32,8 @@ describe("vendor registry", () => {
       expect(url).toMatch(/^https:\/\//);
       // The space and ampersand must be percent-encoded, not raw.
       expect(url).not.toContain(" ");
-      expect(url).toContain("RNA%20extraction%20%26%20cleanup");
+      if (v.id === "morimoto-lab") expect(url).toBe("https://www.morimotolab.org/protocols");
+      else expect(url).toContain("RNA%20extraction%20%26%20cleanup");
     }
   });
 
@@ -64,6 +66,15 @@ describe("vendor registry", () => {
     const { vendors, unknown } = resolveVendors(["neb", "NEB", "bogus"]);
     expect(vendors.map((v) => v.id)).toEqual(["neb", "neb"]); // case-insensitive
     expect(unknown).toEqual(["bogus"]);
+  });
+
+  it("prioritizes preferred publishers without adding excluded sources", () => {
+    expect(VENDOR_IDS.slice(0, 4)).toEqual(PRIORITY_SOURCE_IDS);
+    expect(resolveVendors(["neb", "morimoto-lab", "jove", "protocols-io"]).vendors.map(v => v.id))
+      .toEqual(["protocols-io", "jove", "morimoto-lab", "neb"]);
+    expect(resolveVendors(["neb", "nature-protocols"]).vendors.map(v => v.id))
+      .toEqual(["nature-protocols", "neb"]);
+    expect(VENDOR_IDS).not.toContain("protocol-exchange");
   });
 });
 

@@ -93,7 +93,20 @@ export interface Vendor {
 
 const enc = encodeURIComponent;
 
-export const VENDORS: Vendor[] = [
+/** Preferred protocol publishers, ahead of the remaining sources. */
+export const PRIORITY_SOURCE_IDS: readonly string[] = [
+  "protocols-io", "jove", "nature-protocols", "morimoto-lab",
+];
+
+function prioritize(vendors: Vendor[]): Vendor[] {
+  const rank = (vendor: Vendor): number => {
+    const index = PRIORITY_SOURCE_IDS.indexOf(vendor.id);
+    return index < 0 ? PRIORITY_SOURCE_IDS.length : index;
+  };
+  return [...vendors].sort((a, b) => rank(a) - rank(b));
+}
+
+export const VENDORS: Vendor[] = prioritize([
   {
     id: "star-protocols",
     name: "STAR Protocols (Cell Press)",
@@ -194,6 +207,19 @@ export const VENDORS: Vendor[] = [
     searchSite: "protocols.io",
     searchUrl: (q, options) => protocolsIoSearchUrl(q, options),
     publisherResult: /^https?:\/\/(?:www\.)?protocols\.io\/view\//i,
+  },
+  {
+    id: "morimoto-lab",
+    name: "Morimoto Lab (Northwestern University)",
+    blurb: "Public laboratory protocol PDFs for DNA/RNA, protein biochemistry, cell culture, yeast, and C. elegans. Searches document titles in the lab's live catalog.",
+    kind: "vendor",
+    fetchability: "full",
+    publisherFetch: "full",
+    searchSite: "morimotolab.org",
+    // The lab has a categorized catalog rather than a native search form.
+    searchUrl: () => "https://www.morimotolab.org/protocols",
+    publisherResult: /^https:\/\/www\.morimotolab\.org\/_files\/ugd\/[^/?#]+\.pdf(?:$|\?)/i,
+    ungated: /^https:\/\/www\.morimotolab\.org\/_files\/ugd\/[^/?#]+\.pdf(?:$|\?)/i,
   },
   {
     id: "thermofisher",
@@ -326,7 +352,7 @@ export const VENDORS: Vendor[] = [
       /^https?:\/\/(?:www\.)?idtdna\.com\/page\/support-and-education\//i,
     shadowSearch: true,
   },
-];
+]);
 
 const BY_ID = new Map(VENDORS.map((v) => [v.id, v]));
 
@@ -366,7 +392,7 @@ export function resolveVendors(ids?: readonly string[]): {
     if (v) vendors.push(v);
     else unknown.push(raw);
   }
-  return { vendors, unknown };
+  return { vendors: prioritize(vendors), unknown };
 }
 
 export const VENDOR_IDS = VENDORS.map((v) => v.id);

@@ -954,7 +954,21 @@ async function searchJournal(journal, query, limit, opts = {}) {
 //#endregion
 //#region src/vendors.ts
 const enc = encodeURIComponent;
-const VENDORS = [
+/** Preferred protocol publishers, ahead of the remaining sources. */
+const PRIORITY_SOURCE_IDS = [
+	"protocols-io",
+	"jove",
+	"nature-protocols",
+	"morimoto-lab"
+];
+function prioritize(vendors) {
+	const rank = (vendor) => {
+		const index = PRIORITY_SOURCE_IDS.indexOf(vendor.id);
+		return index < 0 ? PRIORITY_SOURCE_IDS.length : index;
+	};
+	return [...vendors].sort((a, b) => rank(a) - rank(b));
+}
+const VENDORS = prioritize([
 	{
 		id: "star-protocols",
 		name: "STAR Protocols (Cell Press)",
@@ -1046,6 +1060,18 @@ const VENDORS = [
 		searchSite: "protocols.io",
 		searchUrl: (q, options) => protocolsIoSearchUrl(q, options),
 		publisherResult: /^https?:\/\/(?:www\.)?protocols\.io\/view\//i
+	},
+	{
+		id: "morimoto-lab",
+		name: "Morimoto Lab (Northwestern University)",
+		blurb: "Public laboratory protocol PDFs for DNA/RNA, protein biochemistry, cell culture, yeast, and C. elegans. Searches document titles in the lab's live catalog.",
+		kind: "vendor",
+		fetchability: "full",
+		publisherFetch: "full",
+		searchSite: "morimotolab.org",
+		searchUrl: () => "https://www.morimotolab.org/protocols",
+		publisherResult: /^https:\/\/www\.morimotolab\.org\/_files\/ugd\/[^/?#]+\.pdf(?:$|\?)/i,
+		ungated: /^https:\/\/www\.morimotolab\.org\/_files\/ugd\/[^/?#]+\.pdf(?:$|\?)/i
 	},
 	{
 		id: "thermofisher",
@@ -1152,7 +1178,7 @@ const VENDORS = [
 		publisherResult: /^https?:\/\/(?:www\.)?idtdna\.com\/page\/support-and-education\//i,
 		shadowSearch: true
 	}
-];
+]);
 const BY_ID = new Map(VENDORS.map((v) => [v.id, v]));
 function getVendor(id) {
 	return BY_ID.get(id);
@@ -1189,7 +1215,7 @@ function resolveVendors(ids) {
 		else unknown.push(raw);
 	}
 	return {
-		vendors,
+		vendors: prioritize(vendors),
 		unknown
 	};
 }
@@ -1413,7 +1439,7 @@ function assessDoiAvailability(journalPrior, oaSignals = []) {
 const DEFAULT_ENDPOINT = "https://browserless.truegrit.dev";
 const DEFAULT_TIMEOUT_MS$3 = 3e4;
 const MAX_TIMEOUT_MS = 12e4;
-const MAX_HTML_BYTES = 8 * 1024 * 1024;
+const MAX_HTML_BYTES$1 = 8 * 1024 * 1024;
 const RESIDENTIAL_RETRY_DELAY_MS = 1500;
 const SEARCH_SELECTOR_TIMEOUT_MS = 5e3;
 /**
@@ -1549,7 +1575,7 @@ async function renderWithBrowserless(url, doFetch, cfg, residential) {
 				return null;
 			}
 			const raw = await res.text();
-			if (raw.length > MAX_HTML_BYTES) return null;
+			if (raw.length > MAX_HTML_BYTES$1) return null;
 			if (!hosted) return raw.trim() ? raw : null;
 			const content = JSON.parse(raw).content;
 			return typeof content === "string" && content.trim() ? content : null;
@@ -1719,7 +1745,7 @@ async function scrapeSearchWithBrowserless(searchUrl, selector, doFetch, cfg, re
 				return null;
 			}
 			const raw = await response.text();
-			if (!raw.trim() || raw.length > MAX_HTML_BYTES) return null;
+			if (!raw.trim() || raw.length > MAX_HTML_BYTES$1) return null;
 			const results = JSON.parse(raw).data?.find((row) => row.selector === selector)?.results;
 			if (!Array.isArray(results)) return null;
 			const links = [];
@@ -1813,7 +1839,7 @@ async function searchWithBrowserless(searchUrl, query, doFetch, cfg, interaction
 				return null;
 			}
 			const raw = await response.text();
-			if (!raw.trim() || raw.length > MAX_HTML_BYTES) return null;
+			if (!raw.trim() || raw.length > MAX_HTML_BYTES$1) return null;
 			const data = JSON.parse(raw).data;
 			if (!data || !Array.isArray(data.links)) return null;
 			return {
@@ -6768,6 +6794,140 @@ async function searchProtocolsIoApi(query, limit, options = {}, opts = {}) {
 }
 
 //#endregion
+//#region src/morimoto-lab.ts
+const INDEX = "https://www.morimotolab.org/protocols";
+const CATEGORY_PATHS = new Set([
+	"/prokaryotic-cells",
+	"/transcriptional-analysis",
+	"/eukaryotic-cells",
+	"/nucleic-acid-hybridization",
+	"/protein-biochemistry",
+	"/dna-techniques",
+	"/yeast-methods",
+	"/c-elegans-methods",
+	"/rna-techniques",
+	"/general"
+]);
+const PDF = /^\/_files\/ugd\/[^/?#]+\.pdf$/i;
+const TTL_MS = 3600 * 1e3;
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+let cached$1;
+function links(html, base) {
+	const found = [];
+	for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi)) try {
+		const url = new URL(decodeEntities(match[2]), base);
+		if (url.origin !== "https://www.morimotolab.org") continue;
+		const title = stripTags(match[3]).replace(/\s+/g, " ").trim();
+		if (title) found.push({
+			url,
+			title
+		});
+	} catch {}
+	return found;
+}
+async function loadCatalog(opts) {
+	const doFetch = opts.fetchImpl ?? fetch;
+	const read = async (url) => {
+		await opts.validateUrl?.(url);
+		const response = await fetchWithTimeout(doFetch, url, {
+			headers: { Accept: "text/html" },
+			redirect: "error"
+		}, opts.timeoutMs ?? 12e3);
+		if (!response.ok) throw new Error("publisher catalog request failed");
+		if (Number(response.headers.get("content-length")) > MAX_HTML_BYTES) throw new Error("publisher catalog too large");
+		const html = await response.text();
+		if (html.length > MAX_HTML_BYTES) throw new Error("publisher catalog too large");
+		return html;
+	};
+	const categories = [...new Map(links(await read(INDEX), INDEX).filter((link) => CATEGORY_PATHS.has(link.url.pathname)).map((link) => [link.url.pathname, link])).values()];
+	if (!categories.length) throw new Error("publisher categories unavailable");
+	const results = /* @__PURE__ */ new Map();
+	for (let start = 0; start < categories.length; start += 3) {
+		const group = await Promise.all(categories.slice(start, start + 3).map(async (category) => ({
+			category,
+			html: await read(category.url.href)
+		})));
+		for (const { category, html } of group) for (const link of links(html, category.url.href)) {
+			if (!PDF.test(link.url.pathname)) continue;
+			link.url.search = "";
+			link.url.hash = "";
+			results.set(link.url.href, {
+				title: link.title,
+				url: link.url.href,
+				category: category.title,
+				snippet: `Morimoto Lab protocol PDF · ${category.title}. Matched against the publisher's document catalog, not PDF full text.`,
+				discoveredBy: ["morimoto-lab-catalog"]
+			});
+		}
+	}
+	if (!results.size) throw new Error("publisher protocol documents unavailable");
+	return [...results.values()];
+}
+function terms(text) {
+	return text.normalize("NFKC").toLowerCase().replace(/polymerase chain reaction/g, "pcr").replace(/caenorhabditis elegans/g, "c elegans").match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+const STOP = new Set([
+	"a",
+	"an",
+	"and",
+	"for",
+	"from",
+	"in",
+	"of",
+	"on",
+	"or",
+	"protocol",
+	"protocols",
+	"the",
+	"to",
+	"with"
+]);
+/** Search the publisher's current categorized PDF catalog without a browser. */
+async function searchMorimotoLab(query, limit, opts = {}) {
+	const started = Date.now();
+	try {
+		const cacheable = !opts.fetchImpl && !opts.validateUrl;
+		if (cacheable && (!cached$1 || cached$1.until <= Date.now())) {
+			const loading = loadCatalog(opts);
+			const entry = {
+				until: Date.now() + TTL_MS,
+				loading
+			};
+			cached$1 = entry;
+			loading.catch(() => {
+				if (cached$1 === entry) cached$1 = void 0;
+			});
+		}
+		const catalog = await (cacheable ? cached$1.loading : loadCatalog(opts));
+		const queryTerms = [...new Set(terms(query).filter((term) => !STOP.has(term)))];
+		const ranked = catalog.map((entry) => {
+			const titleTerms = terms(entry.title);
+			const title = new Set(titleTerms);
+			const combined = new Set([...titleTerms, ...terms(entry.category)]);
+			const matched = queryTerms.filter((term) => combined.has(term)).length;
+			const titleMatched = queryTerms.filter((term) => title.has(term)).length;
+			return {
+				entry,
+				matched,
+				score: matched * 100 + titleMatched * 20
+			};
+		}).filter((row) => !queryTerms.length || row.matched === queryTerms.length).sort((a, b) => b.score - a.score || a.entry.title.localeCompare(b.entry.title));
+		return {
+			status: "ok",
+			elapsedMs: Date.now() - started,
+			results: ranked.slice(0, limit).map(({ entry: { category: _category, ...result } }) => result)
+		};
+	} catch {
+		return {
+			status: "error",
+			results: [],
+			elapsedMs: Date.now() - started,
+			error: "Morimoto Lab protocol catalog could not be loaded completely"
+		};
+	}
+}
+
+//#endregion
 //#region src/agent/url-policy.ts
 function blockedIpv4(address) {
 	const p = address.split(".").map(Number);
@@ -8172,6 +8332,24 @@ async function searchProtocols(query, opts = {}) {
 	const needsFallback = /* @__PURE__ */ new Set();
 	await mapPool(vendors, Math.min(concurrency, 2), async (vendor) => {
 		const bucket = buckets.get(vendor.id);
+		if (vendor.id === "morimoto-lab") {
+			const catalog = await searchMorimotoLab(trimmed, limit, providerOpts);
+			bucket.providers = [{
+				id: "morimoto-lab-catalog",
+				status: catalog.status,
+				count: catalog.results.length,
+				elapsedMs: catalog.elapsedMs,
+				...catalog.error ? { error: catalog.error } : {}
+			}];
+			if (catalog.status === "ok") {
+				bucket.results = catalog.results;
+				bucket.source = "morimoto-lab-catalog";
+			} else {
+				partial = true;
+				bucket.error = catalog.error ?? "Morimoto Lab protocol catalog could not be loaded";
+			}
+			return;
+		}
 		const filteredProtocolsIo = vendor.id === "protocols-io" && customizedProtocolsIo;
 		if (vendor.id === "protocols-io" && protocolsIoApiAvailable()) {
 			const api = await searchProtocolsIoApi(trimmed, limit, opts.protocolsIo, providerOpts);
@@ -8331,7 +8509,7 @@ async function search(query, opts = {}) {
 	for (const b of base.vendors) {
 		const vendor = getVendor(b.id);
 		const kind = vendor?.kind ?? "vendor";
-		const effectiveQuery = vendor ? b.source?.startsWith("publisher-browserless") || b.source === "protocols-io-api" ? `${trimmed} on ${vendor.searchSite}` : kind === "journal" ? `${trimmed} in ${b.name}` : `site:${vendor.searchSite} ${trimmed}` : void 0;
+		const effectiveQuery = vendor ? b.source?.startsWith("publisher-browserless") || b.source === "protocols-io-api" || b.source === "morimoto-lab-catalog" ? `${trimmed} on ${vendor.searchSite}` : kind === "journal" ? `${trimmed} in ${b.name}` : `site:${vendor.searchSite} ${trimmed}` : void 0;
 		const rows = [];
 		const seen = /* @__PURE__ */ new Set();
 		const grade = vendor?.fetchability ?? "partial";
@@ -9602,7 +9780,7 @@ const TOOLS = [
 			openWorldHint: true,
 			idempotentHint: false
 		},
-		description: "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, reagent, product, enzyme, or recognition site. Every journal/vendor is searched on its own publisher page through AWS Browserless first, except protocols.io uses its native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured, with Browserless as fallback. Failed journal searches fall back to scholarly APIs (Crossref/Europe PMC), and failed vendor searches fall back to site-scoped web search. Restriction enzymes use REBASE (NEB's open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — fresh exact DOI observations from the daily CI index win, current OA metadata is next, and the source grade is the fallback prior. Call `fetch` with a result's id to read its content; vendor pages included. For protocols.io, pass `protocolsIo` to control native sort/order, page, access, scientific facets, tags/keywords, advanced fields, journal/DOI, and publication dates. Advanced fields require mode=advanced and cannot be mixed with sidebar facets. Returns artifact.protocolsIo with searchId, query state, publisher facet counts and totalMatches (null when unavailable). Use refine_search to narrow the full query afterward. Prefer Codex's integrated Browser for browser tasks because it uses a separate profile and provides a shared view. For NEB, pass `browser: host` so both the rendered search and selected result pages use the integrated Browser; commit those captures with `neb_search_commit`, and a following `fetch` returns the same captured HTML. Do not silently switch to system Chrome. Use `browser: default` or `cdp` only when the integrated Browser is unavailable and the user explicitly authorizes that fallback.",
+		description: `Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, reagent, product, enzyme, or recognition site. Prioritize ${PRIORITY_SOURCE_IDS.join(", ")} when selected. Every journal/vendor is searched on its own publisher page through AWS Browserless first, except protocols.io uses its native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured, with Browserless as fallback. Failed journal searches fall back to scholarly APIs (Crossref/Europe PMC). Morimoto Lab searches its live categorized PDF catalog directly, matching document titles/categories rather than PDF full text, and failed vendor searches fall back to site-scoped web search. Restriction enzymes use REBASE (NEB's open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a ranked list of results, each with a stable \`id\`, a \`source\`, and a \`fetchable\` grade — fresh exact DOI observations from the daily CI index win, current OA metadata is next, and the source grade is the fallback prior. Call \`fetch\` with a result's id to read its content; vendor pages included. For protocols.io, pass \`protocolsIo\` to control native sort/order, page, access, scientific facets, tags/keywords, advanced fields, journal/DOI, and publication dates. Advanced fields require mode=advanced and cannot be mixed with sidebar facets. Returns artifact.protocolsIo with searchId, query state, publisher facet counts and totalMatches (null when unavailable). Use refine_search to narrow the full query afterward. Prefer Codex's integrated Browser for browser tasks because it uses a separate profile and provides a shared view. For NEB, pass \`browser: host\` so both the rendered search and selected result pages use the integrated Browser; commit those captures with \`neb_search_commit\`, and a following \`fetch\` returns the same captured HTML. Do not silently switch to system Chrome. Use \`browser: default\` or \`cdp\` only when the integrated Browser is unavailable and the user explicitly authorizes that fallback.`,
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -9616,7 +9794,7 @@ const TOOLS = [
 						type: "string",
 						enum: SOURCE_IDS
 					},
-					description: `Optional subset of source ids to search. Omit to search all (REBASE is auto-included for enzyme queries). Valid ids: ${SOURCE_IDS.join(", ")}.`
+					description: `Optional subset of source ids to search. Selected preferred sources come first: ${PRIORITY_SOURCE_IDS.join(", ")}. Omit to search all (REBASE is auto-included for enzyme queries). Valid ids: ${SOURCE_IDS.join(", ")}.`
 				},
 				limit: {
 					type: "number",
@@ -10089,10 +10267,12 @@ async function callTool(name, args) {
 		const providers = providerStatus().map((p) => `${p.id}${p.available ? "" : " (not configured)"}`).join(", ");
 		return toolText([
 			"Sources (call `search`, then `fetch` a result's id):",
+			`Preferred publishers, in order: ${PRIORITY_SOURCE_IDS.join(" → ")}. Only selected/enabled sources are searched.`,
 			...lines,
 			"",
 			"Primary publisher search: AWS Browserless (when BROWSERLESS_TOKEN is configured).",
 			"protocols.io: native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured; Browserless fallback preserves filters and sorting.",
+			"Morimoto Lab: direct search of document titles/categories in its live PDF catalog; fetch returns the selected PDF's text.",
 			`Fallback web-search providers (vendors): ${providers}.`,
 			`Fallback journal providers: ${journalProviderOrder().join(" → ")}.`,
 			"Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for vendor-search fallback; set PROTOCOLS_CONTACT_EMAIL to enable the Unpaywall open-access full-text fallback."

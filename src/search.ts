@@ -17,6 +17,7 @@ import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
 import { assessDoiAvailability, type DoiAvailabilityEvidence } from "./availability.ts";
 import { searchPublisher } from "./publisher-search.ts";
 import { protocolsIoApiAvailable, searchProtocolsIoApi } from "./protocols-io-api.ts";
+import { searchMorimotoLab } from "./morimoto-lab.ts";
 import { bioProtocolDoiFromUrl } from "./fulltext.ts";
 import type { ProtocolsIoFacets } from "./protocols-io-refinement.ts";
 import {
@@ -157,6 +158,20 @@ export async function searchProtocols(
   const needsFallback = new Set<string>();
   await mapPool(vendors, Math.min(concurrency, 2), async (vendor) => {
     const bucket = buckets.get(vendor.id)!;
+    if (vendor.id === "morimoto-lab") {
+      const catalog = await searchMorimotoLab(trimmed, limit, providerOpts);
+      bucket.providers = [{ id: "morimoto-lab-catalog", status: catalog.status,
+        count: catalog.results.length, elapsedMs: catalog.elapsedMs,
+        ...(catalog.error ? { error: catalog.error } : {}) }];
+      if (catalog.status === "ok") {
+        bucket.results = catalog.results;
+        bucket.source = "morimoto-lab-catalog";
+      } else {
+        partial = true;
+        bucket.error = catalog.error ?? "Morimoto Lab protocol catalog could not be loaded";
+      }
+      return;
+    }
     const filteredProtocolsIo = vendor.id === "protocols-io" && customizedProtocolsIo;
     if (vendor.id === "protocols-io" && protocolsIoApiAvailable()) {
       const api = await searchProtocolsIoApi(trimmed, limit, opts.protocolsIo, providerOpts);
@@ -428,7 +443,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
     // an echo that adds quotes the real query never had reads as an exact-phrase
     // search and invites "loosen the quoting" fixes for a non-existent problem.
     const effectiveQuery = vendor
-      ? b.source?.startsWith("publisher-browserless") || b.source === "protocols-io-api"
+      ? b.source?.startsWith("publisher-browserless") || b.source === "protocols-io-api" || b.source === "morimoto-lab-catalog"
         ? `${trimmed} on ${vendor.searchSite}`
         : kind === "journal"
           ? `${trimmed} in ${b.name}`

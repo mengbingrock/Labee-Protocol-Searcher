@@ -83,6 +83,30 @@ when its MCP server starts.
 You can narrow a request by organism, sample type, instrument, reagent, journal,
 supplier, or protocol step.
 
+### Preferred protocol publishers
+
+Labee searches and presents selected publishers in this priority order:
+
+1. `protocols-io` — protocols.io, with native API filters and sorting.
+2. `jove` — JoVE (Journal of Visualized Experiments).
+3. `nature-protocols` — Nature Protocols.
+4. `morimoto-lab` — Northwestern University's Morimoto Lab.
+
+Other enabled sources follow these publishers. Priority does not override source
+toggles or an explicit source subset. Morimoto Lab is available as its own
+plugin toggle; it searches document titles and categories across the lab's
+[public PDF catalog](https://www.morimotolab.org/protocols). `fetch` reads the
+selected PDF. Search does not scan PDF full text. The live catalog is cached for
+one hour, and a failed category load is reported instead of returning a partial
+catalog as a complete search.
+Verify live search and PDF retrieval with
+`LABEE_LIVE_MORIMOTO=1 npm test -- test/morimoto-lab-live.test.ts`.
+
+Protocol Exchange is not a separate supported source. Its protocols have
+[migrated to protocols.io](https://group.springernature.com/gp/group/media/press-releases/protocols-io-migration/27181110)
+and may appear in protocols.io searches. Historical counts in external source
+tables are not treated as current collection sizes.
+
 ### protocols.io-specific search controls
 
 When `protocols-io` is selected, the MCP `search` tool accepts a `protocolsIo`

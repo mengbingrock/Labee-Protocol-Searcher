@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { ProtocolsIoSearchStore, selectedProtocolsIoFilters } from "./protocols-io-refinement.ts";
 import { search, renderSearch } from "./search.ts";
-import { VENDORS, VENDOR_IDS, type Fetchability } from "./vendors.ts";
+import { VENDORS, VENDOR_IDS, PRIORITY_SOURCE_IDS, type Fetchability } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
 import { journalProviderOrder } from "./journals.ts";
 import { looksLikeEnzymeQuery } from "./rebase.ts";
@@ -166,10 +166,12 @@ export const TOOLS = [
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: false },
     description:
       "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, " +
-      "reagent, product, enzyme, or recognition site. Every journal/vendor is searched on its own " +
+      `reagent, product, enzyme, or recognition site. Prioritize ${PRIORITY_SOURCE_IDS.join(", ")} when selected. ` +
+      "Every journal/vendor is searched on its own " +
       "publisher page through AWS Browserless first, except protocols.io uses its native JSON search API " +
       "when PROTOCOLS_IO_ACCESS_TOKEN is configured, with Browserless as fallback. Failed journal searches fall back to scholarly " +
-      "APIs (Crossref/Europe PMC), and failed vendor searches fall back to site-scoped web search. " +
+      "APIs (Crossref/Europe PMC). Morimoto Lab searches its live categorized PDF catalog directly, matching document titles/categories rather than PDF full text, " +
+      "and failed vendor searches fall back to site-scoped web search. " +
       "Restriction enzymes use REBASE (NEB's " +
       "open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a " +
       "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — " +
@@ -199,7 +201,7 @@ export const TOOLS = [
           type: "array",
           items: { type: "string", enum: SOURCE_IDS },
           description:
-            "Optional subset of source ids to search. Omit to search all (REBASE is auto-included " +
+            `Optional subset of source ids to search. Selected preferred sources come first: ${PRIORITY_SOURCE_IDS.join(", ")}. Omit to search all (REBASE is auto-included ` +
             `for enzyme queries). Valid ids: ${SOURCE_IDS.join(", ")}.`,
         },
         limit: {
@@ -617,10 +619,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     return toolText(
       [
         "Sources (call `search`, then `fetch` a result's id):",
+        `Preferred publishers, in order: ${PRIORITY_SOURCE_IDS.join(" → ")}. Only selected/enabled sources are searched.`,
         ...lines,
         "",
         "Primary publisher search: AWS Browserless (when BROWSERLESS_TOKEN is configured).",
         "protocols.io: native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured; Browserless fallback preserves filters and sorting.",
+        "Morimoto Lab: direct search of document titles/categories in its live PDF catalog; fetch returns the selected PDF's text.",
         `Fallback web-search providers (vendors): ${providers}.`,
         `Fallback journal providers: ${journalProviderOrder().join(" → ")}.`,
         "Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for vendor-search fallback; " +

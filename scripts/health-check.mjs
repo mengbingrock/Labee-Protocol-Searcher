@@ -309,6 +309,20 @@ async function probeSources(declared) {
   const { json, stderr } = await search(["--query", QUERY, "--limit", "3"]);
   if (!json) return { rows: [], searchError: stderr, doiFetchability: [] };
 
+  // This catalog matches document titles, so the generic "PCR purification"
+  // probe can correctly have no matches while the source works. Measure it
+  // using a title term present in the lab's catalog and label that exception.
+  if (declared.has("morimoto-lab")) {
+    const { json: catalogJson } = await withRetry(
+      () => search(["--query", "PCR", "--sources", "morimoto-lab", "--limit", "3"]),
+      result => !(result.json?.results?.length > 0),
+    );
+    json.sources = (json.sources ?? []).filter(source => source.id !== "morimoto-lab");
+    json.sources.push(...(catalogJson?.sources ?? []));
+    json.results = (json.results ?? []).filter(result => result.source !== "morimoto-lab");
+    json.results.push(...(catalogJson?.results ?? []));
+  }
+
   const doiFetchability = await probeDoiResults(json.results ?? []);
   const doiById = new Map(doiFetchability.map((row) => [`doi:${row.doi}`, row]));
 
@@ -403,6 +417,7 @@ function sourceCell(row) {
 
 function searchRouteCell(row) {
   if (row.searchRoute === "protocols-io-api") return `${OK} protocols.io native API`;
+  if (row.searchRoute === "morimoto-lab-catalog") return `${OK} Morimoto Lab PDF catalog`;
   if (row.searchRoute === "publisher-browserless") return `${OK} AWS Browserless`;
   if (row.searchRoute === "publisher-browserless-residential") {
     return `${OK} AWS Browserless · residential`;
@@ -450,7 +465,7 @@ export function summarize(report) {
     sourcesWithHits: sources.filter((s) => s.count > 0).length,
     sourcesProbed: sources.length,
     publisherSearches: publisherSources.filter((s) =>
-      s.searchRoute?.startsWith("publisher-browserless") || s.searchRoute === "protocols-io-api",
+      s.searchRoute?.startsWith("publisher-browserless") || s.searchRoute === "protocols-io-api" || s.searchRoute === "morimoto-lab-catalog",
     ).length,
     publisherSources: publisherSources.length,
     residentialSearches: publisherSources.filter(
@@ -563,14 +578,14 @@ function renderBlock(report, history = []) {
   lines.push(
     `_Measured automatically by [\`scripts/health-check.mjs\`](scripts/health-check.mjs), ` +
       `re-run daily by [the health workflow](.github/workflows/health.yml). ` +
-      `Last run: **${generatedAt}** · probe query \`${query}\` (\`${enzyme}\` for REBASE)._`,
+      `Last run: **${generatedAt}** · probe query \`${query}\` (\`${enzyme}\` for REBASE${sources.some(source => source.id === "morimoto-lab") ? "; `PCR` for Morimoto Lab" : ""})._`,
   );
   lines.push("");
   lines.push(
     "The scheduled run searches every declared protocol journal and vendor, then calls `fetch` " +
       "for each source's top result. It additionally fetches every unique journal DOI returned " +
       "by the sweep. Publisher search uses the AWS Browserless deployment first, except protocols.io " +
-      "uses its native API when configured; this report " +
+      "uses its native API when configured and Morimoto Lab searches its public PDF catalog; this report " +
       "shows when a scholarly or web database had to answer instead.",
   );
   lines.push("");

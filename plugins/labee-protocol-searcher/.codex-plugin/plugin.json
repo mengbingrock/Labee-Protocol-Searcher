@@ -1,6 +1,6 @@
 {
   "name": "labee-protocol-searcher",
-  "version": "0.6.0+codex.20261008000100",
+  "version": "0.6.0+codex.20261009054000",
   "description": "Search selected laboratory-protocol publishers through the hosted MCP service, with per-source toggles and safe browser-assisted retrieval.",
   "author": {
     "name": "Labee",

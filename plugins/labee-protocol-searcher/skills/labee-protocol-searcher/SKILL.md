@@ -18,7 +18,7 @@ The plugin packages one `labee-source-*` skill for every searchable publisher, s
 Before every Labee `search` or `refine_search` call:
 
 1. Inspect the available skill metadata for enabled skills whose names begin with `labee-source-` (a host may prefix the plugin name before the skill name).
-2. Read each enabled selector's exact source id from its description and pass all enabled ids in `sources`.
+2. Read each enabled selector's exact source id from its description and pass all enabled ids in `sources`. Put enabled preferred publishers first, in this order: `protocols-io`, `jove`, `nature-protocols`, `morimoto-lab`, followed by other enabled sources. Do not enable a disabled source to satisfy this priority.
 3. If the user explicitly asks for a narrower source set, intersect it with the enabled ids. Never query a source whose selector skill is disabled; tell the user to enable that source in the plugin configuration page. `refine_search` searches only protocols.io; recheck that its selector is enabled even if a searchId was obtained earlier.
 4. If no `labee-source-*` skills exist, treat the installation as a legacy client and omit `sources` to preserve search-all behavior.
 
