@@ -34,6 +34,7 @@
 
 import type { ResidentialSelector } from "./residential.ts";
 import { decodeEntities, stripTags } from "./providers/types.ts";
+import { protocolsIoFacetsFromHtml, type ProtocolsIoFacets } from "./protocols-io-refinement.ts";
 
 /**
  * Our own deployment, running the fork. Deliberately not a hosted
@@ -62,6 +63,7 @@ export interface BrowserlessSearchLink {
 }
 
 export interface BrowserlessSearchPage {
+  protocolsIo?: ProtocolsIoFacets;
   title: string;
   url: string;
   bodyText: string;
@@ -353,6 +355,8 @@ function searchPageFromHtml(html: string, requestedUrl: string): BrowserlessSear
     url: requestedUrl,
     bodyText,
     links,
+    ...(new URL(requestedUrl).hostname.replace(/^www\./, "") === "protocols.io"
+      ? { protocolsIo: protocolsIoFacetsFromHtml(html, requestedUrl) } : {}),
   };
 }
 

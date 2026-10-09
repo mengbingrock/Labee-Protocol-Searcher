@@ -62,6 +62,7 @@ jobs:
           GOOGLE_CSE_CX: ${{ secrets.GOOGLE_CSE_CX }}
           SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
           NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          PROTOCOLS_IO_ACCESS_TOKEN: ${{ secrets.PROTOCOLS_IO_ACCESS_TOKEN }}
           # Required by the Unpaywall tier of `fetch` (it's the `email=` param).
           PROTOCOLS_CONTACT_EMAIL: ${{ vars.PROTOCOLS_CONTACT_EMAIL }}
         run: >-

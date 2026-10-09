@@ -83,6 +83,88 @@ when its MCP server starts.
 You can narrow a request by organism, sample type, instrument, reagent, journal,
 supplier, or protocol step.
 
+### protocols.io-specific search controls
+
+When `protocols-io` is selected, the MCP `search` tool accepts a `protocolsIo`
+object that mirrors the public protocols.io search interface:
+
+- `sortBy`: `relevance`, `date`, `title`, `mentions` (Impact), or `wfm`
+  (Works for me); `order`: `asc` or `desc`; and one-indexed `page`.
+- `access`, `techniques`, `antibodies`, `organisms`, and `cellLines` for the
+  normal faceted search.
+- `mode: "simple"` (default) for sidebar facets; `mode: "advanced"` for
+  pre-search criteria. Modes are never converted automatically.
+- `tags` as a convenient advanced-mode keywords filter.
+- `fields` for advanced field/value searches across scientific concepts,
+  title, author, ORCID, affiliation, funders, abstract, keywords, equipment,
+  reagents, SKUs, RRIDs, CAS numbers, and catalog numbers.
+- `journalTitle`, `articleDoi`, and paired `publishedFrom` / `publishedTo`
+  dates for the remaining advanced-search controls.
+- `openAccess` and `springerProtocol` booleans for advanced access constraints.
+  These differ from the simple-mode `access` union; advanced mode rejects
+  sidebar facet parameters instead of silently changing their meaning.
+
+With `PROTOCOLS_IO_ACCESS_TOKEN` configured, Labee sends those values directly
+to the website's native JSON search API (`/api/v1/search`) and keeps the site's
+requested result order. It returns protocol version URLs and publisher totals
+and facets without launching a browser. This observed website endpoint differs
+from the documented `/api/v3/protocols` REST API and may change with the website.
+Browserless is the fallback and is also used when no token is configured.
+If that filtered publisher search fails,
+Labee returns the exact search URL rather than silently substituting unfiltered
+web-search results.
+
+Simple search defaults to `access: ["open_access"]`, matching the website.
+Use `access: []` to search all access categories; this is preserved in subsequent
+refinement. See [the API investigation](docs/protocols-io-api.md) for verified
+capabilities, curl examples, and the differences between the two API endpoints.
+
+### Search, inspect facets, then refine
+
+`search` returns `artifact.protocolsIo` with an opaque `searchId`, effective
+query/options, sort/page, selected filters, publisher `totalMatches`, and
+`availableFacets` with publisher counts. These are not counts of the few rows
+returned by Labee. Unknown totals are `null`; confirmed zero matches are not
+treated as a backend failure. Facets are publisher-provided subsets
+(`complete: false`), not an exhaustive vocabulary. API entity lists were capped
+at 100 choices in live probes; rendered fallback groups may be collapsed or absent. Advanced mode
+reports `facetStatus: "unsupported-in-advanced-mode"`.
+
+```json
+{"query":"pcr","sources":["protocols-io"],"protocolsIo":{"sortBy":"mentions"}}
+```
+
+Pass the returned ID to `refine_search`:
+
+```json
+{"searchId":"<returned searchId>","changes":{"access":["open_access"],"techniques":["PCR"]}}
+```
+
+Refinement searches the entire publisher index again, only for protocols.io.
+Query and limit are preserved. Arrays replace just the named selection; `[]`
+clears it. Omitted options remain unchanged. Filter/sort changes reset page to 1
+unless explicitly provided; `{"page":2}` preserves all other criteria.
+Advanced fields can be revised in the same mode; switching modes requires a new
+`search`. Every response includes a fresh ID and updated counts/state in both
+text and the structured artifact.
+
+IDs are opaque capabilities backed by a bounded process-local cache (256
+snapshots, 30-minute TTL). They expire on restart or eviction; rerun `search`
+with the echoed options if expired. Multi-worker deployments need sticky routing
+or a shared, tenant-scoped state store before enabling refinement across workers.
+The remote authoritative MCP service must be deployed with this code; rebuilding
+the local stdio plugin alone does not add remote tools.
+
+Run the optional live Browserless smoke test with
+`LABEE_LIVE_SEARCH=1 npm test -- test/protocols-io-live.test.ts` after configuring
+`BROWSERLESS_TOKEN` (and `BROWSERLESS_URL` if needed). It exercises simple search,
+result refinement, and a separate advanced search. Normal tests use fixtures.
+Run `LABEE_LIVE_PROTOCOLS_IO_API=1 npm test -- test/protocols-io-api-live.test.ts`
+to verify the configured token, all five native sorts, pagination, facets,
+cleared filters, advanced search, and confirmed zero matches over direct HTTP.
+Configure the token on the authoritative hosted backend to enable this route
+for remote MCP clients; a local `.env` only configures local CLI/HTTP execution.
+
 ## What you receive
 
 ### One clear result list
@@ -92,8 +174,9 @@ appear in one response. Duplicate papers found by several indexes are combined.
 
 ### Publisher-first search and fetch
 
-For every protocol journal and supplier, Labee follows the same production
-order:
+protocols.io first uses its native JSON API when `PROTOCOLS_IO_ACCESS_TOKEN`
+is configured. Other protocol journals, suppliers, and its browser fallback
+follow these steps:
 
 1. Render the publisher's own search page through the self-hosted AWS
    Browserless service. Ordinary pages use `/content`; NEB uses `/scrape` with

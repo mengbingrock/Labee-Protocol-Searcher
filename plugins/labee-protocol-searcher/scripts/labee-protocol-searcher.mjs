@@ -169,9 +169,336 @@ function stripTags(s) {
 }
 
 //#endregion
+//#region src/protocols-io.ts
+/** Source-specific search controls supported by protocols.io's public search UI. */
+const PROTOCOLS_IO_SORT_VALUES = [
+	"relevance",
+	"date",
+	"title",
+	"mentions",
+	"wfm"
+];
+const PROTOCOLS_IO_ORDER_VALUES = ["asc", "desc"];
+const PROTOCOLS_IO_ACCESS_VALUES = ["open_access", "springer_protocols"];
+/** Exact advanced-search field keys used by protocols.io. */
+const PROTOCOLS_IO_ADVANCED_FIELDS = [
+	"all",
+	"all_entities.techniques",
+	"all_entities.antibodies",
+	"all_entities.organisms",
+	"all_entities.cell_lines",
+	"title",
+	"authors_string",
+	"orcid",
+	"affiliation",
+	"funders_string",
+	"funder_grant",
+	"abstract",
+	"keywords",
+	"equipment_title",
+	"equipment_sku",
+	"reagent_title",
+	"reagent_rrid",
+	"reagent_cas_number",
+	"reagent_catalog_number"
+];
+const SORT_SET = new Set(PROTOCOLS_IO_SORT_VALUES);
+const ORDER_SET = new Set(PROTOCOLS_IO_ORDER_VALUES);
+const ACCESS_SET = new Set(PROTOCOLS_IO_ACCESS_VALUES);
+const FIELD_SET = new Set(PROTOCOLS_IO_ADVANCED_FIELDS);
+function optionalString(value) {
+	if (typeof value !== "string") return void 0;
+	return value.trim() || void 0;
+}
+function stringList(value) {
+	if (!Array.isArray(value)) return void 0;
+	const out = value.map(optionalString).filter((item) => Boolean(item));
+	return out.length > 0 ? [...new Set(out)] : void 0;
+}
+/** Whitelist and normalize untrusted MCP input before it reaches URL construction. */
+function parseProtocolsIoSearchOptions(value) {
+	if (value === void 0) return void 0;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("protocolsIo must be an object");
+	const raw = value;
+	validateOptions(raw);
+	const sortBy = typeof raw.sortBy === "string" && SORT_SET.has(raw.sortBy) ? raw.sortBy : void 0;
+	const order = typeof raw.order === "string" && ORDER_SET.has(raw.order) ? raw.order : void 0;
+	const access = Array.isArray(raw.access) ? [...new Set(raw.access.filter((item) => typeof item === "string" && ACCESS_SET.has(item)))] : void 0;
+	const fields = Array.isArray(raw.fields) ? raw.fields.flatMap((item) => {
+		if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+		const entry = item;
+		const field = typeof entry.field === "string" && FIELD_SET.has(entry.field) ? entry.field : void 0;
+		const fieldValue = optionalString(entry.value);
+		return field && fieldValue ? [{
+			field,
+			value: fieldValue
+		}] : [];
+	}) : void 0;
+	const pageValue = typeof raw.page === "number" && Number.isFinite(raw.page) ? Math.max(1, Math.floor(raw.page)) : void 0;
+	const techniques = stringList(raw.techniques);
+	const antibodies = stringList(raw.antibodies);
+	const organisms = stringList(raw.organisms);
+	const cellLines = stringList(raw.cellLines);
+	const tags = stringList(raw.tags);
+	const journalTitle = optionalString(raw.journalTitle);
+	const articleDoi = optionalString(raw.articleDoi);
+	const publishedFrom = optionalString(raw.publishedFrom);
+	const publishedTo = optionalString(raw.publishedTo);
+	const parsed = {
+		...raw.mode ? { mode: raw.mode } : {},
+		...typeof raw.openAccess === "boolean" ? { openAccess: raw.openAccess } : {},
+		...typeof raw.springerProtocol === "boolean" ? { springerProtocol: raw.springerProtocol } : {},
+		...sortBy ? { sortBy } : {},
+		...order ? { order } : {},
+		...pageValue ? { page: pageValue } : {},
+		...access ? { access } : {},
+		...techniques ? { techniques } : {},
+		...antibodies ? { antibodies } : {},
+		...organisms ? { organisms } : {},
+		...cellLines ? { cellLines } : {},
+		...tags ? { tags } : {},
+		...fields?.length ? { fields } : {},
+		...journalTitle ? { journalTitle } : {},
+		...articleDoi ? { articleDoi } : {},
+		...publishedFrom ? { publishedFrom } : {},
+		...publishedTo ? { publishedTo } : {}
+	};
+	return hasProtocolsIoSearchOptions(parsed) ? parsed : void 0;
+}
+const PROTOCOLS_IO_FACET_KEYS = [
+	"access",
+	"techniques",
+	"antibodies",
+	"organisms",
+	"cellLines"
+];
+function validateOptions(raw) {
+	const lists = [...PROTOCOLS_IO_FACET_KEYS, "tags"];
+	const strings = [
+		"journalTitle",
+		"articleDoi",
+		"publishedFrom",
+		"publishedTo"
+	];
+	const allowed = new Set([
+		...lists,
+		...strings,
+		"mode",
+		"sortBy",
+		"order",
+		"page",
+		"fields",
+		"openAccess",
+		"springerProtocol"
+	]);
+	for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new Error(`Unknown protocolsIo option: ${key}`);
+	for (const [key, choices] of [
+		["mode", new Set(["simple", "advanced"])],
+		["sortBy", SORT_SET],
+		["order", ORDER_SET]
+	]) if (raw[key] !== void 0 && (typeof raw[key] !== "string" || !choices.has(raw[key]))) throw new Error(`Invalid protocolsIo.${key}`);
+	if (raw.page !== void 0 && (!Number.isSafeInteger(raw.page) || raw.page < 1)) throw new Error("protocolsIo.page must be a positive integer");
+	for (const key of lists) {
+		const list = raw[key];
+		if (list !== void 0 && (!Array.isArray(list) || list.some((x) => typeof x !== "string" || !x.trim() || x.includes("|")))) throw new Error(`protocolsIo.${key} must be an array of nonempty values without |`);
+	}
+	if (raw.access?.some((x) => !ACCESS_SET.has(x))) throw new Error("Invalid protocolsIo.access");
+	for (const key of strings) if (raw[key] !== void 0 && typeof raw[key] !== "string") throw new Error(`protocolsIo.${key} must be a string`);
+	for (const key of ["openAccess", "springerProtocol"]) if (raw[key] !== void 0 && typeof raw[key] !== "boolean") throw new Error(`protocolsIo.${key} must be boolean`);
+	if (raw.fields !== void 0 && (!Array.isArray(raw.fields) || raw.fields.some((x) => !x || typeof x !== "object" || !FIELD_SET.has(x.field) || typeof x.value !== "string" || !x.value.trim()))) throw new Error("Invalid protocolsIo.fields");
+	if ((["fields", "tags"].some((k) => raw[k]?.length) || strings.some((k) => Boolean(raw[k])) || raw.openAccess !== void 0 || raw.springerProtocol !== void 0) && raw.mode !== "advanced") throw new Error("Advanced fields require protocolsIo.mode=\"advanced\"; sidebar facets are not converted automatically");
+	if (raw.mode === "advanced" && PROTOCOLS_IO_FACET_KEYS.some((k) => raw[k]?.length)) throw new Error("Advanced mode does not support sidebar facets; use explicit fields and openAccess/springerProtocol instead");
+	if (Boolean(raw.publishedFrom) !== Boolean(raw.publishedTo)) throw new Error("Publication filtering requires both publishedFrom and publishedTo");
+	for (const key of ["publishedFrom", "publishedTo"]) {
+		const date = raw[key];
+		if (date && (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) throw new Error(`Invalid ISO date: ${key}`);
+	}
+	if (raw.publishedFrom && raw.publishedTo && String(raw.publishedFrom) > String(raw.publishedTo)) throw new Error("publishedFrom must not follow publishedTo");
+}
+function hasProtocolsIoSearchOptions(options) {
+	return Boolean(options && Object.keys(options).length > 0);
+}
+function values(options) {
+	return options?.map((value) => value.trim()).filter(Boolean) ?? [];
+}
+function addParam(params, key, value) {
+	if (value === void 0 || value === "") return;
+	params.push(`${key}=${encodeURIComponent(String(value))}`);
+}
+/** The website defaults simple searches to Open Access; [] explicitly clears it. */
+function effectiveProtocolsIoSearchOptions(options = {}) {
+	return options.mode === "advanced" ? { ...options } : {
+		...options,
+		access: options.access ?? ["open_access"]
+	};
+}
+/** Query syntax sent by the website to /api/v1/search, observed 2026-10-08. */
+function protocolsIoAdvancedQuery(query, options) {
+	validateOptions(options);
+	const escape = (value) => value.trim().replace(/([(){}\[\]^\\/])/g, "\\$1");
+	const field = (key, value) => {
+		if (key === "all") return value.trim();
+		const text = escape(value);
+		return key.startsWith("all_entities.") ? `${key}:("${text.replaceAll("\"", "")}")` : `${key}:(${text})`;
+	};
+	const clauses = [
+		query.trim(),
+		...values(options.tags).map((value) => field("keywords", value)),
+		...(options.fields ?? []).map(({ field: key, value }) => field(key, value))
+	];
+	if (options.journalTitle?.trim()) clauses.push(`journal_title:(${escape(options.journalTitle)})`);
+	if (options.springerProtocol) clauses.push("origin:(springer_link)");
+	if (options.openAccess) clauses.push("is_open_access:(true)");
+	if (options.articleDoi?.trim()) clauses.push(`article_doi:(${escape(options.articleDoi)})`);
+	if (options.publishedFrom && options.publishedTo) clauses.push(`published:[${options.publishedFrom} TO ${options.publishedTo}]`);
+	return clauses.filter(Boolean).join(" AND ");
+}
+/** Build the exact public search URL consumed by protocols.io's current UI. */
+function protocolsIoSearchUrl(query, options = {}) {
+	validateOptions(options);
+	options = effectiveProtocolsIoSearchOptions(options);
+	const params = [];
+	if (options.mode === "advanced") {
+		const fields = [];
+		const addField = (key, value) => {
+			const trimmed = value.trim();
+			if (trimmed) fields.push({
+				key,
+				value: trimmed
+			});
+		};
+		addField("all", query);
+		for (const value of values(options.tags)) addField("keywords", value);
+		for (const { field, value } of options.fields ?? []) addField(field, value);
+		const state = {
+			fields,
+			springer_protocol: options.springerProtocol ?? false,
+			open_access: options.openAccess ?? false,
+			...options.journalTitle?.trim() ? { journal_title: options.journalTitle.trim() } : {},
+			...options.articleDoi?.trim() ? { article_doi: options.articleDoi.trim() } : {},
+			...options.publishedFrom?.trim() ? { published_from: options.publishedFrom.trim() } : {},
+			...options.publishedTo?.trim() ? { published_to: options.publishedTo.trim() } : {}
+		};
+		addParam(params, "q", JSON.stringify(state));
+		params.push("is_advanced=1");
+	} else {
+		addParam(params, "q", query.trim());
+		if (options.access) params.push(`access=${options.access.join(",")}`);
+		for (const [key, list] of [
+			["techniques", options.techniques],
+			["antibodies", options.antibodies],
+			["organisms", options.organisms],
+			["cell_lines", options.cellLines]
+		]) {
+			const selected = values(list);
+			if (selected.length) params.push(`${key}=${selected.map(encodeURIComponent).join("%7C")}`);
+		}
+	}
+	if (options.sortBy && options.sortBy !== "relevance") addParam(params, "sort_by", options.sortBy);
+	const order = options.order ?? (options.sortBy === "title" ? "asc" : void 0);
+	if (order) addParam(params, "sort_dir", order);
+	if ((options.page ?? 1) > 1) addParam(params, "page_id", Math.floor(options.page));
+	return `https://www.protocols.io/search?${params.join("&")}`;
+}
+
+//#endregion
+//#region src/protocols-io-refinement.ts
+/** Read publisher-rendered facet counts, not counts calculated from returned rows. */
+function protocolsIoFacetsFromHtml(html, url) {
+	const visible = html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, " ");
+	const text = decodeEntities(stripTags(visible.replace(/</g, " <"))).replace(/\s+/g, " ");
+	const total = /\b([\d,]+)\s+results?\s+(?:for|found)\b/i.exec(text);
+	const result = {
+		totalMatches: total ? Number(total[1].replaceAll(",", "")) : /\bNo results? for\b/i.test(text) ? 0 : null,
+		facetsAvailable: false,
+		availableFacets: {}
+	};
+	if (new URL(url).searchParams.get("is_advanced") === "1") return result;
+	const groups = {
+		access: "access",
+		techniques: "techniques",
+		antibodies: "antibodies",
+		organisms: "organisms",
+		cell_lines: "cellLines"
+	};
+	for (const input of visible.matchAll(/<input\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi)) {
+		const attrs = {};
+		for (const a of input[0].matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attrs[a[1]] = decodeEntities(a[2] ?? a[3] ?? "");
+		const match = /^checkbox-filter-option-(access|techniques|antibodies|organisms|cell_lines)-/.exec(attrs["data-testid"] ?? "");
+		const label = attrs["data-option-label"];
+		if (!match || !label) continue;
+		const group = groups[match[1]];
+		const value = group === "access" ? {
+			"Open Access": "open_access",
+			"Springer Protocols": "springer_protocols"
+		}[label] : label;
+		if (!value) continue;
+		const count = /,\s*([\d,]+)\s*$/.exec(attrs["aria-label"] ?? "");
+		const facet = result.availableFacets[group] ??= {
+			complete: false,
+			options: []
+		};
+		if (!facet.options.some((o) => o.value === value)) facet.options.push({
+			value,
+			label,
+			count: count ? Number(count[1].replaceAll(",", "")) : null
+		});
+		result.facetsAvailable = true;
+	}
+	return result;
+}
+/** Opaque capability IDs; bounded, process-local, expiring, and storing no result text. */
+var ProtocolsIoSearchStore = class {
+	states = /* @__PURE__ */ new Map();
+	now;
+	ttlMs;
+	maxEntries;
+	constructor(now = Date.now, ttlMs = 30 * 6e4, maxEntries = 256) {
+		this.now = now;
+		this.ttlMs = ttlMs;
+		this.maxEntries = Math.max(1, maxEntries);
+	}
+	save(state) {
+		for (const [id, s] of this.states) if (s.expires <= this.now()) this.states.delete(id);
+		while (this.states.size >= this.maxEntries) this.states.delete(this.states.keys().next().value);
+		const searchId = randomUUID();
+		const expires = this.now() + this.ttlMs;
+		this.states.set(searchId, {
+			...structuredClone(state),
+			expires
+		});
+		return {
+			searchId,
+			expiresAt: new Date(expires).toISOString()
+		};
+	}
+	refine(searchId, patch) {
+		const state = typeof searchId === "string" ? this.states.get(searchId) : void 0;
+		if (!state || state.expires <= this.now()) throw new Error("Unknown or expired searchId; run search again (state expires after 30 minutes or server restart)");
+		if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("changes must be an object");
+		const changes = patch;
+		if (changes.mode !== void 0 && changes.mode !== (state.options.mode ?? "simple")) throw new Error("Changing search mode requires a new search; filters are never converted automatically");
+		const merged = {
+			...state.options,
+			...changes
+		};
+		if (Object.keys(changes).some((k) => k !== "page") && changes.page === void 0) merged.page = 1;
+		const options = parseProtocolsIoSearchOptions(merged) ?? {};
+		return {
+			query: state.query,
+			options,
+			limit: state.limit
+		};
+	}
+};
+function selectedProtocolsIoFilters(options) {
+	return Object.fromEntries(PROTOCOLS_IO_FACET_KEYS.map((key) => [key, options[key] ?? []]));
+}
+
+//#endregion
 //#region src/providers/brave.ts
 const DEFAULT_ENDPOINT$2 = "https://api.search.brave.com/res/v1/web/search";
-const DEFAULT_TIMEOUT_MS$6 = 9e3;
+const DEFAULT_TIMEOUT_MS$7 = 9e3;
 function apiKey() {
 	return process.env.BRAVE_API_KEY || process.env.BRAVE_SEARCH_API_KEY || void 0;
 }
@@ -190,7 +517,7 @@ const braveProvider = {
 			error: "BRAVE_API_KEY not set"
 		};
 		const doFetch = opts.fetchImpl ?? fetch;
-		const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$6;
+		const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$7;
 		const url = `${endpoint$1()}?q=${encodeURIComponent(query)}&count=${Math.min(20, Math.max(1, limit))}&country=us&search_lang=en`;
 		try {
 			const res = await fetchWithTimeout(doFetch, url, { headers: {
@@ -240,7 +567,7 @@ const braveProvider = {
 //#endregion
 //#region src/providers/google.ts
 const DEFAULT_ENDPOINT$1 = "https://www.googleapis.com/customsearch/v1";
-const DEFAULT_TIMEOUT_MS$5 = 9e3;
+const DEFAULT_TIMEOUT_MS$6 = 9e3;
 function creds() {
 	const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_CSE_KEY;
 	const cx = process.env.GOOGLE_CSE_CX || process.env.GOOGLE_CSE_ID;
@@ -264,7 +591,7 @@ const googleProvider = {
 			error: "GOOGLE_API_KEY/GOOGLE_CSE_CX not set"
 		};
 		const doFetch = opts.fetchImpl ?? fetch;
-		const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$5;
+		const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$6;
 		const url = `${endpoint()}?key=${encodeURIComponent(c.key)}&cx=${encodeURIComponent(c.cx)}&q=${encodeURIComponent(query)}&num=${Math.min(10, Math.max(1, limit))}`;
 		try {
 			const res = await fetchWithTimeout(doFetch, url, { headers: { Accept: "application/json" } }, timeoutMs);
@@ -409,7 +736,7 @@ async function webSearch(query, limit, opts) {
 
 //#endregion
 //#region src/journals.ts
-const DEFAULT_TIMEOUT_MS$4 = 9e3;
+const DEFAULT_TIMEOUT_MS$5 = 9e3;
 const CONTACT = process.env.PROTOCOLS_CONTACT_EMAIL || "labee-protocol-searcher@example.com";
 /**
 * Titles and abstracts arrive as publisher markup, and some sources escape it:
@@ -447,7 +774,7 @@ const crossref = async (journal, query, limit, opts) => {
 	const res = await fetchWithRetry(opts.fetchImpl ?? fetch, `https://api.crossref.org/works?query=${encodeURIComponent(query)}&filter=container-title:${encodeURIComponent(journal.crossrefContainer)}&rows=${limit}&select=title,DOI,URL,abstract&sort=relevance&mailto=${encodeURIComponent(CONTACT)}`, { headers: {
 		Accept: "application/json",
 		"User-Agent": `labee-protocol-searcher (mailto:${CONTACT})`
-	} }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$4);
+	} }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$5);
 	if (res.status !== 200) throw new Error(`Crossref HTTP ${res.status}`);
 	return ((await res.json()).message?.items ?? []).map((it) => ({
 		title: text(it.title?.[0]),
@@ -458,7 +785,7 @@ const crossref = async (journal, query, limit, opts) => {
 const europepmc = async (journal, query, limit, opts) => {
 	const doFetch = opts.fetchImpl ?? fetch;
 	const q = `${query} AND JOURNAL:"${journal.europepmcJournal}"`;
-	const res = await fetchWithRetry(doFetch, `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(q)}&format=json&pageSize=${limit}&resultType=lite`, { headers: { Accept: "application/json" } }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$4);
+	const res = await fetchWithRetry(doFetch, `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(q)}&format=json&pageSize=${limit}&resultType=lite`, { headers: { Accept: "application/json" } }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$5);
 	if (res.status !== 200) throw new Error(`Europe PMC HTTP ${res.status}`);
 	return ((await res.json()).resultList?.result ?? []).map((r) => {
 		const evidence = [];
@@ -479,7 +806,7 @@ const openalex = async (journal, query, limit, opts) => {
 	const res = await fetchWithRetry(doFetch, `https://api.openalex.org/works?search=${encodeURIComponent(query)}&filter=primary_location.source.issn:${encodeURIComponent(issnFilter)}&per_page=${limit}&mailto=${encodeURIComponent(CONTACT)}`, { headers: {
 		Accept: "application/json",
 		"User-Agent": `labee-protocol-searcher (mailto:${CONTACT})`
-	} }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$4);
+	} }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$5);
 	if (res.status !== 200) throw new Error(`OpenAlex HTTP ${res.status}`);
 	return ((await res.json()).results ?? []).map((w) => {
 		const evidence = [];
@@ -500,7 +827,7 @@ const semanticscholar = async (journal, query, limit, opts) => {
 	const headers = { Accept: "application/json" };
 	const key = process.env.SEMANTIC_SCHOLAR_API_KEY;
 	if (key) headers["x-api-key"] = key;
-	const res = await fetchWithRetry(doFetch, url, { headers }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$4, { retries: key ? 2 : 0 });
+	const res = await fetchWithRetry(doFetch, url, { headers }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$5, { retries: key ? 2 : 0 });
 	if (res.status !== 200) throw new Error(`Semantic Scholar HTTP ${res.status}`);
 	return ((await res.json()).data ?? []).map((w) => {
 		const evidence = w.openAccessPdf?.url ? [`semanticscholar:open-access-pdf:${w.openAccessPdf.url}`] : [];
@@ -514,7 +841,7 @@ const semanticscholar = async (journal, query, limit, opts) => {
 };
 const pubmed = async (journal, query, limit, opts) => {
 	const doFetch = opts.fetchImpl ?? fetch;
-	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$4;
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$5;
 	const keyParam = process.env.NCBI_API_KEY ? `&api_key=${process.env.NCBI_API_KEY}` : "";
 	const common = `&tool=labee-protocol-searcher&email=${encodeURIComponent(CONTACT)}${keyParam}`;
 	const term = `${query} AND "${journal.europepmcJournal}"[Journal]`;
@@ -717,7 +1044,7 @@ const VENDORS = [
 		fetchability: "full",
 		publisherFetch: "full",
 		searchSite: "protocols.io",
-		searchUrl: (q) => `https://www.protocols.io/search?q=${enc(q)}`,
+		searchUrl: (q, options) => protocolsIoSearchUrl(q, options),
 		publisherResult: /^https?:\/\/(?:www\.)?protocols\.io\/view\//i
 	},
 	{
@@ -871,7 +1198,7 @@ const VENDOR_IDS = VENDORS.map((v) => v.id);
 //#endregion
 //#region src/rebase.ts
 const REBASE_URL = "https://rebase.neb.com/rebase/link_withrefm";
-const DEFAULT_TIMEOUT_MS$3 = 15e3;
+const DEFAULT_TIMEOUT_MS$4 = 15e3;
 const CACHE_TTL_MS = 1440 * 60 * 1e3;
 const NEB_CODE = "N";
 let cache$1 = null;
@@ -946,7 +1273,7 @@ async function loadIndex(opts) {
 	const res = await fetchWithRetry(opts.fetchImpl ?? fetch, REBASE_URL, { headers: {
 		Accept: "text/plain",
 		"User-Agent": "labee-protocol-searcher"
-	} }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$3);
+	} }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$4);
 	if (res.status !== 200) throw new Error(`REBASE HTTP ${res.status}`);
 	const index = parseRebase(await res.text());
 	cache$1 = {
@@ -1084,7 +1411,7 @@ function assessDoiAvailability(journalPrior, oaSignals = []) {
 * third party that this project does not control.
 */
 const DEFAULT_ENDPOINT = "https://browserless.truegrit.dev";
-const DEFAULT_TIMEOUT_MS$2 = 3e4;
+const DEFAULT_TIMEOUT_MS$3 = 3e4;
 const MAX_TIMEOUT_MS = 12e4;
 const MAX_HTML_BYTES = 8 * 1024 * 1024;
 const RESIDENTIAL_RETRY_DELAY_MS = 1500;
@@ -1103,7 +1430,7 @@ function browserlessConfig(env = process.env) {
 	return {
 		endpoint,
 		token,
-		timeoutMs: Number.isFinite(configured) && configured > 0 ? Math.min(configured, MAX_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS$2
+		timeoutMs: Number.isFinite(configured) && configured > 0 ? Math.min(configured, MAX_TIMEOUT_MS) : DEFAULT_TIMEOUT_MS$3
 	};
 }
 /**
@@ -1199,7 +1526,7 @@ async function renderWithBrowserless(url, doFetch, cfg, residential) {
 			waitUntil: "domcontentloaded",
 			timeout: MAX_TIMEOUT_MS
 		},
-		waitForTimeout: DEFAULT_TIMEOUT_MS$2,
+		waitForTimeout: DEFAULT_TIMEOUT_MS$3,
 		solveCaptchas: true
 	});
 	const attempts = residential && !hosted ? 2 : 1;
@@ -1329,7 +1656,8 @@ function searchPageFromHtml(html, requestedUrl) {
 		title: decodeEntities(stripTags(titleMatch?.[1] ?? "")).trim(),
 		url: requestedUrl,
 		bodyText,
-		links
+		links,
+		...new URL(requestedUrl).hostname.replace(/^www\./, "") === "protocols.io" ? { protocolsIo: protocolsIoFacetsFromHtml(html, requestedUrl) } : {}
 	};
 }
 /**
@@ -1365,7 +1693,7 @@ async function scrapeSearchWithBrowserless(searchUrl, selector, doFetch, cfg, re
 			waitUntil: "domcontentloaded",
 			timeout: MAX_TIMEOUT_MS
 		},
-		waitForTimeout: DEFAULT_TIMEOUT_MS$2,
+		waitForTimeout: DEFAULT_TIMEOUT_MS$3,
 		solveCaptchas: true,
 		elements: [{
 			selector,
@@ -1457,7 +1785,7 @@ async function searchWithBrowserless(searchUrl, query, doFetch, cfg, interaction
 	const context = {
 		entryUrl: interaction?.startUrl ?? searchUrl,
 		query,
-		waitMs: DEFAULT_TIMEOUT_MS$2,
+		waitMs: DEFAULT_TIMEOUT_MS$3,
 		interactive: Boolean(interaction),
 		shadowDom,
 		...interaction?.inputSelector ? { inputSelector: interaction.inputSelector } : {},
@@ -6148,6 +6476,9 @@ function startResidentialAgent(log = (m) => process.stderr.write(`${m}\n`), env 
 //#endregion
 //#region src/publisher-search.ts
 const CHALLENGE = /human verification|confirm you are human|verify (?:you are|that you are) human|just a moment|checking your browser|safeLine WAF|access denied|something went wrong/i;
+function publisherFacets(page) {
+	return page && !CHALLENGE.test(`${page.title}\n${page.bodyText.slice(0, 2e3)}`) ? page.protocolsIo : void 0;
+}
 function titleScore(title) {
 	const text = title.trim();
 	if (!text) return -1e3;
@@ -6193,8 +6524,9 @@ function relevanceScore(result, query) {
 	const phrase = queryWords.join(" ");
 	return (titleWords.join(" ").includes(phrase) ? 1e4 : 0) + (bodyWords.join(" ").includes(phrase) ? 4e3 : 0) + titleMatches * 1e3 + bodyMatches * 200 + (titleMatches === queryWords.length ? 2e3 : 0) + (bodyMatches === queryWords.length ? 500 : 0);
 }
-function resultsFromPage(vendor, page, query, limit) {
+function resultsFromPage(vendor, page, query, limit, preserveOrder = false) {
 	if (CHALLENGE.test(`${page.title}\n${page.bodyText.slice(0, 2e3)}`)) return [];
+	if (vendor.id === "protocols-io" && page.protocolsIo?.totalMatches === 0) return [];
 	const byUrl = /* @__PURE__ */ new Map();
 	for (const link of page.links) {
 		if (!link.text.trim() || !vendor.publisherResult.test(link.href)) continue;
@@ -6211,14 +6543,16 @@ function resultsFromPage(vendor, page, query, limit) {
 		if (!current) byUrl.set(url, candidate);
 		else if (titleScore(candidate.title) > titleScore(current.title)) byUrl.set(url, candidate);
 	}
-	return [...byUrl.values()].map((result, index) => ({
+	const results = [...byUrl.values()];
+	if (preserveOrder) return results.slice(0, limit);
+	return results.map((result, index) => ({
 		result,
 		index,
 		score: relevanceScore(result, query)
 	})).sort((a, b) => b.score - a.score || a.index - b.index).slice(0, limit).map(({ result }) => result);
 }
 /** Search one publisher's own rendered search UI, datacenter first. */
-async function searchPublisher(vendor, query, limit, opts = {}) {
+async function searchPublisher(vendor, query, limit, opts = {}, request = {}) {
 	const started = Date.now();
 	const cfg = browserlessConfig();
 	if (!cfg) return {
@@ -6227,7 +6561,7 @@ async function searchPublisher(vendor, query, limit, opts = {}) {
 		elapsedMs: Date.now() - started,
 		error: "BROWSERLESS_TOKEN is not configured"
 	};
-	const searchUrl = vendor.searchUrl(query);
+	const searchUrl = request.searchUrl ?? vendor.searchUrl(query);
 	const entryUrl = vendor.interactiveSearch?.startUrl ?? searchUrl;
 	try {
 		await opts.validateUrl?.(entryUrl);
@@ -6249,8 +6583,9 @@ async function searchPublisher(vendor, query, limit, opts = {}) {
 		if (residentialSelector) {
 			residentialAttempted = true;
 			const residential = await runPublisherSearch(residentialSelector);
-			const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit) : [];
-			if (residentialResults.length > 0) return {
+			const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit, request.preserveOrder) : [];
+			if (residentialResults.length > 0 || publisherFacets(residential)?.totalMatches === 0) return {
+				...residential?.protocolsIo ? { protocolsIo: residential.protocolsIo } : {},
 				results: residentialResults,
 				source: "publisher-browserless-residential",
 				status: "ok",
@@ -6259,8 +6594,9 @@ async function searchPublisher(vendor, query, limit, opts = {}) {
 		}
 	}
 	const direct = await runPublisherSearch();
-	const directResults = direct ? resultsFromPage(vendor, direct, query, limit) : [];
-	if (directResults.length > 0) return {
+	const directResults = direct ? resultsFromPage(vendor, direct, query, limit, request.preserveOrder) : [];
+	if (directResults.length > 0 || publisherFacets(direct)?.totalMatches === 0) return {
+		...direct?.protocolsIo ? { protocolsIo: direct.protocolsIo } : {},
 		results: directResults,
 		source: "publisher-browserless",
 		status: "ok",
@@ -6270,8 +6606,9 @@ async function searchPublisher(vendor, query, limit, opts = {}) {
 	const selector = residentialAttempted ? null : residentialSelector ?? residentialSelectorFor(entryUrl);
 	if (selector) {
 		const residential = await runPublisherSearch(selector);
-		const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit) : [];
-		if (residentialResults.length > 0) return {
+		const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit, request.preserveOrder) : [];
+		if (residentialResults.length > 0 || publisherFacets(residential)?.totalMatches === 0) return {
+			...residential?.protocolsIo ? { protocolsIo: residential.protocolsIo } : {},
 			results: residentialResults,
 			source: "publisher-browserless-residential",
 			status: "ok",
@@ -6280,10 +6617,154 @@ async function searchPublisher(vendor, query, limit, opts = {}) {
 	}
 	return {
 		results: [],
+		...publisherFacets(direct) ? { protocolsIo: publisherFacets(direct) } : {},
 		status: direct ? "empty" : "error",
 		elapsedMs: Date.now() - started,
 		error: direct ? "publisher page rendered but exposed no credible result links" : "publisher Browserless search failed"
 	};
+}
+
+//#endregion
+//#region src/protocols-io-api.ts
+const ENDPOINT = "https://www.protocols.io/api/v1/search";
+const DEFAULT_TIMEOUT_MS$2 = 12e3;
+function protocolsIoApiAvailable() {
+	return Boolean(process.env.PROTOCOLS_IO_ACCESS_TOKEN?.trim());
+}
+function protocolsIoApiSearchUrl(query, options = {}) {
+	const publicUrl = new URL(protocolsIoSearchUrl(query, options));
+	const effective = effectiveProtocolsIoSearchOptions(options);
+	const advanced = effective.mode === "advanced";
+	const url = new URL(ENDPOINT);
+	url.search = new URLSearchParams({
+		q: advanced ? protocolsIoAdvancedQuery(query, effective) : query.trim(),
+		types: "1",
+		sort_by: effective.sortBy ?? "relevance",
+		sort_dir: effective.order ?? (effective.sortBy === "title" ? "asc" : "desc"),
+		page_id: String(effective.page ?? 1),
+		page_size: "30",
+		use_fields_boosters: "true",
+		is_advanced: String(advanced),
+		...!advanced ? { entity_facets: "true" } : {}
+	}).toString();
+	if (!advanced) for (const key of [
+		"access",
+		"techniques",
+		"antibodies",
+		"organisms",
+		"cell_lines"
+	]) {
+		const value = publicUrl.searchParams.get(key);
+		if (value) url.searchParams.set(key, value);
+	}
+	return url.toString();
+}
+function record(value) {
+	return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function count(value) {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+function facets(body, advanced) {
+	const state = {
+		totalMatches: count(record(body.pagination)?.total_results),
+		facetsAvailable: false,
+		availableFacets: {}
+	};
+	if (advanced) return state;
+	const access = record(body.access_facets);
+	if (access) {
+		state.facetsAvailable = true;
+		state.availableFacets.access = {
+			complete: false,
+			options: Object.entries(access).flatMap(([value, data]) => ["open_access", "springer_protocols"].includes(value) ? [{
+				value,
+				label: value === "open_access" ? "Open Access" : "Springer Protocols",
+				count: count(record(data)?.count)
+			}] : [])
+		};
+	}
+	const entities = record(body.entity_facets);
+	for (const [key, target] of [
+		["techniques", "techniques"],
+		["antibodies", "antibodies"],
+		["organisms", "organisms"],
+		["cell_lines", "cellLines"]
+	]) {
+		const options = entities?.[key];
+		if (!Array.isArray(options)) continue;
+		state.facetsAvailable = true;
+		state.availableFacets[target] = {
+			complete: false,
+			options: options.flatMap((value) => {
+				const item = record(value);
+				const label = typeof item?.label === "string" ? item.label.trim() : "";
+				return label ? [{
+					value: label,
+					label,
+					count: count(item?.count)
+				}] : [];
+			})
+		};
+	}
+	return state;
+}
+/** Authenticated public discovery only. Failures retain the exact browser fallback. */
+async function searchProtocolsIoApi(query, limit, options = {}, opts = {}) {
+	const started = Date.now();
+	const outcome = (status, error) => ({
+		status,
+		results: [],
+		elapsedMs: Date.now() - started,
+		error
+	});
+	const token = process.env.PROTOCOLS_IO_ACCESS_TOKEN?.trim();
+	if (!token) return outcome("unavailable", "PROTOCOLS_IO_ACCESS_TOKEN is not configured");
+	try {
+		const url = protocolsIoApiSearchUrl(query, options);
+		await opts.validateUrl?.(url);
+		const response = await fetchWithTimeout(opts.fetchImpl ?? fetch, url, {
+			headers: {
+				Accept: "application/json",
+				Authorization: `Bearer ${token}`
+			},
+			redirect: "error"
+		}, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS$2);
+		if (!response.ok) return outcome("error", `protocols.io search API HTTP ${response.status}`);
+		const body = record(await response.json());
+		if (!body || body.status_code !== 0 || !Array.isArray(body.items)) return outcome("error", "protocols.io search API returned an invalid response");
+		const state = facets(body, options.mode === "advanced");
+		const page = count(record(body.pagination)?.current_page);
+		if (state.totalMatches === null || page !== (options.page ?? 1)) return outcome("error", "protocols.io search API returned invalid pagination");
+		const results = [];
+		const seen = /* @__PURE__ */ new Set();
+		for (const value of body.items) {
+			const item = record(value);
+			if (!item || item.public !== 1 && item.public !== true) return outcome("error", "protocols.io search API returned a non-public or invalid item");
+			const uri = typeof item.version_uri === "string" ? item.version_uri : item.uri;
+			const title = typeof item.title === "string" ? stripTags(stripTags(item.title)) : "";
+			if (typeof uri !== "string" || !/^[a-z0-9][a-z0-9-]*(?:\/v\d+)?$/i.test(uri) || !title) return outcome("error", "protocols.io search API returned an invalid protocol");
+			const url = `https://www.protocols.io/view/${uri}`;
+			if (seen.has(url)) continue;
+			seen.add(url);
+			results.push({
+				title,
+				url,
+				snippet: typeof item.description === "string" ? stripTags(stripTags(item.description)).slice(0, 500) : "",
+				discoveredBy: ["protocols-io-api"]
+			});
+		}
+		if (state.totalMatches === 0 && results.length > 0) return outcome("error", "protocols.io search API returned inconsistent results");
+		if (state.totalMatches > 0 && results.length === 0 && (options.page ?? 1) === 1) return outcome("error", "protocols.io search API returned incomplete results");
+		return {
+			status: "ok",
+			results: results.slice(0, limit),
+			protocolsIo: state,
+			elapsedMs: Date.now() - started
+		};
+	} catch (error) {
+		return outcome("error", error instanceof Error && error.name === "AbortError" ? "protocols.io search API timed out" : "protocols.io search API request failed");
+	}
 }
 
 //#endregion
@@ -7680,27 +8161,52 @@ async function searchProtocols(query, opts = {}) {
 	const batchSize = Math.max(1, opts.batchSize ?? 1);
 	const concurrency = Math.max(1, opts.concurrency ?? 4);
 	const providerOpts = opts.providerOpts ?? {};
+	const customizedProtocolsIo = hasProtocolsIoSearchOptions(opts.protocolsIo);
 	const buckets = new Map(vendors.map((v) => [v.id, {
 		id: v.id,
 		name: v.name,
-		searchUrl: v.searchUrl(trimmed),
+		searchUrl: v.searchUrl(trimmed, v.id === "protocols-io" ? opts.protocolsIo : void 0),
 		results: []
 	}]));
 	let partial = false;
 	const needsFallback = /* @__PURE__ */ new Set();
 	await mapPool(vendors, Math.min(concurrency, 2), async (vendor) => {
 		const bucket = buckets.get(vendor.id);
-		const outcome = await searchPublisher(vendor, trimmed, limit, providerOpts);
-		bucket.providers = [{
+		const filteredProtocolsIo = vendor.id === "protocols-io" && customizedProtocolsIo;
+		if (vendor.id === "protocols-io" && protocolsIoApiAvailable()) {
+			const api = await searchProtocolsIoApi(trimmed, limit, opts.protocolsIo, providerOpts);
+			bucket.providers = [{
+				id: "protocols-io-api",
+				status: api.status,
+				count: api.results.length,
+				elapsedMs: api.elapsedMs,
+				...api.error ? { error: api.error } : {}
+			}];
+			if (api.status === "ok") {
+				bucket.results = api.results;
+				bucket.source = "protocols-io-api";
+				if (api.protocolsIo) bucket.protocolsIo = api.protocolsIo;
+				return;
+			}
+		}
+		const outcome = await searchPublisher(vendor, trimmed, limit, providerOpts, {
+			searchUrl: bucket.searchUrl,
+			preserveOrder: vendor.id === "protocols-io"
+		});
+		bucket.providers = [...bucket.providers ?? [], {
 			id: "publisher-browserless",
 			status: outcome.status,
 			count: outcome.results.length,
 			elapsedMs: outcome.elapsedMs,
 			...outcome.error ? { error: outcome.error } : {}
 		}];
-		if (outcome.results.length > 0) {
+		if (outcome.protocolsIo) bucket.protocolsIo = outcome.protocolsIo;
+		if (outcome.results.length > 0 || outcome.protocolsIo?.totalMatches === 0) {
 			bucket.results = outcome.results;
 			if (outcome.source) bucket.source = outcome.source;
+		} else if (filteredProtocolsIo) {
+			partial = true;
+			bucket.error = outcome.error ?? "filtered protocols.io search returned no results";
 		} else needsFallback.add(vendor.id);
 	});
 	await mapPool(vendors.filter((v) => v.kind === "journal" && needsFallback.has(v.id)), concurrency, async (v) => {
@@ -7816,7 +8322,8 @@ async function search(query, opts = {}) {
 		...opts.limit !== void 0 ? { limit: opts.limit } : {},
 		...opts.batchSize !== void 0 ? { batchSize: opts.batchSize } : {},
 		...opts.concurrency !== void 0 ? { concurrency: opts.concurrency } : {},
-		...opts.providerOpts ? { providerOpts: opts.providerOpts } : {}
+		...opts.providerOpts ? { providerOpts: opts.providerOpts } : {},
+		...opts.protocolsIo ? { protocolsIo: opts.protocolsIo } : {}
 	});
 	const results = [];
 	const sources = [];
@@ -7824,7 +8331,7 @@ async function search(query, opts = {}) {
 	for (const b of base.vendors) {
 		const vendor = getVendor(b.id);
 		const kind = vendor?.kind ?? "vendor";
-		const effectiveQuery = vendor ? b.source?.startsWith("publisher-browserless") ? `${trimmed} on ${vendor.searchSite}` : kind === "journal" ? `${trimmed} in ${b.name}` : `site:${vendor.searchSite} ${trimmed}` : void 0;
+		const effectiveQuery = vendor ? b.source?.startsWith("publisher-browserless") || b.source === "protocols-io-api" ? `${trimmed} on ${vendor.searchSite}` : kind === "journal" ? `${trimmed} in ${b.name}` : `site:${vendor.searchSite} ${trimmed}` : void 0;
 		const rows = [];
 		const seen = /* @__PURE__ */ new Set();
 		const grade = vendor?.fetchability ?? "partial";
@@ -7864,6 +8371,7 @@ async function search(query, opts = {}) {
 			name: b.name,
 			kind,
 			searchUrl: b.searchUrl,
+			...b.protocolsIo ? { protocolsIo: b.protocolsIo } : {},
 			...effectiveQuery ? { query: effectiveQuery } : {},
 			...b.source ? { route: b.source } : {},
 			count: rows.length,
@@ -8969,6 +9477,94 @@ function browserAdapterForMode(mode) {
 //#region src/mcp.ts
 /** Every searchable source id: the vendors/journals plus the REBASE database. */
 const SOURCE_IDS = [...VENDOR_IDS, "rebase"];
+const PROTOCOLS_IO_OPTIONS_SCHEMA = {
+	type: "object",
+	description: "Optional protocols.io-only filters. Applied only when `protocols-io` is among the selected sources.",
+	properties: {
+		mode: {
+			type: "string",
+			enum: ["simple", "advanced"],
+			description: "Defaults to simple. Advanced fields/tags require explicit advanced mode. Sidebar facets are simple-only."
+		},
+		openAccess: {
+			type: "boolean",
+			description: "Advanced-mode open-access constraint (not the sidebar access union)."
+		},
+		springerProtocol: {
+			type: "boolean",
+			description: "Advanced-mode Springer constraint."
+		},
+		sortBy: {
+			type: "string",
+			enum: PROTOCOLS_IO_SORT_VALUES,
+			description: "protocols.io sort: relevance, date, title, mentions (Impact), or wfm (Works for me)."
+		},
+		order: {
+			type: "string",
+			enum: PROTOCOLS_IO_ORDER_VALUES,
+			description: "Ascending or descending sort direction (`sort_dir`)."
+		},
+		page: {
+			type: "integer",
+			minimum: 1,
+			description: "One-indexed protocols.io result page."
+		},
+		access: {
+			type: "array",
+			items: {
+				type: "string",
+				enum: PROTOCOLS_IO_ACCESS_VALUES
+			},
+			description: "Access filters: open_access and/or springer_protocols."
+		},
+		techniques: {
+			type: "array",
+			items: { type: "string" }
+		},
+		antibodies: {
+			type: "array",
+			items: { type: "string" }
+		},
+		organisms: {
+			type: "array",
+			items: { type: "string" }
+		},
+		cellLines: {
+			type: "array",
+			items: { type: "string" }
+		},
+		tags: {
+			type: "array",
+			items: { type: "string" },
+			description: "Keyword/tag filters. Each value becomes a protocols.io advanced `keywords` field."
+		},
+		fields: {
+			type: "array",
+			description: "Advanced field/value filters. Scientific concepts, title, author, ORCID, affiliation, funder, abstract, keywords, equipment, and reagent identifiers are supported.",
+			items: {
+				type: "object",
+				properties: {
+					field: {
+						type: "string",
+						enum: PROTOCOLS_IO_ADVANCED_FIELDS
+					},
+					value: { type: "string" }
+				},
+				required: ["field", "value"]
+			}
+		},
+		journalTitle: { type: "string" },
+		articleDoi: { type: "string" },
+		publishedFrom: {
+			type: "string",
+			description: "Publication-range start in YYYY-MM-DD form; provide publishedTo too."
+		},
+		publishedTo: {
+			type: "string",
+			description: "Publication-range end in YYYY-MM-DD form; provide publishedFrom too."
+		}
+	}
+};
 const LATEST_PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2024-11-05"];
 function packageVersion() {
@@ -8990,6 +9586,7 @@ const OPTIONAL_LABEE_AUTH = [{ type: "noauth" }, {
 }];
 /** Search-to-fetch browser handoff for the lifetime of the authoritative MCP process. */
 const sameProfileBrowserById = /* @__PURE__ */ new Map();
+const protocolsIoSearches = new ProtocolsIoSearchStore();
 const TOOLS = [
 	{
 		name: "search",
@@ -9005,7 +9602,7 @@ const TOOLS = [
 			openWorldHint: true,
 			idempotentHint: false
 		},
-		description: "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, reagent, product, enzyme, or recognition site. Every journal/vendor is searched on its own publisher page through AWS Browserless first. Failed journal searches fall back to scholarly APIs (Crossref/Europe PMC), and failed vendor searches fall back to site-scoped web search. Restriction enzymes use REBASE (NEB's open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — fresh exact DOI observations from the daily CI index win, current OA metadata is next, and the source grade is the fallback prior. Call `fetch` with a result's id to read its content; vendor pages included. Prefer Codex's integrated Browser for browser tasks because it uses a separate profile and provides a shared view. For NEB, pass `browser: host` so both the rendered search and selected result pages use the integrated Browser; commit those captures with `neb_search_commit`, and a following `fetch` returns the same captured HTML. Do not silently switch to system Chrome. Use `browser: default` or `cdp` only when the integrated Browser is unavailable and the user explicitly authorizes that fallback.",
+		description: "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, reagent, product, enzyme, or recognition site. Every journal/vendor is searched on its own publisher page through AWS Browserless first, except protocols.io uses its native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured, with Browserless as fallback. Failed journal searches fall back to scholarly APIs (Crossref/Europe PMC), and failed vendor searches fall back to site-scoped web search. Restriction enzymes use REBASE (NEB's open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — fresh exact DOI observations from the daily CI index win, current OA metadata is next, and the source grade is the fallback prior. Call `fetch` with a result's id to read its content; vendor pages included. For protocols.io, pass `protocolsIo` to control native sort/order, page, access, scientific facets, tags/keywords, advanced fields, journal/DOI, and publication dates. Advanced fields require mode=advanced and cannot be mixed with sidebar facets. Returns artifact.protocolsIo with searchId, query state, publisher facet counts and totalMatches (null when unavailable). Use refine_search to narrow the full query afterward. Prefer Codex's integrated Browser for browser tasks because it uses a separate profile and provides a shared view. For NEB, pass `browser: host` so both the rendered search and selected result pages use the integrated Browser; commit those captures with `neb_search_commit`, and a following `fetch` returns the same captured HTML. Do not silently switch to system Chrome. Use `browser: default` or `cdp` only when the integrated Browser is unavailable and the user explicitly authorizes that fallback.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -9034,7 +9631,8 @@ const TOOLS = [
 						"host"
 					],
 					description: "Optional visible NEB browser override. The omitted/default path uses AWS Browserless. `host` delegates NEB search and result capture to Codex's integrated Browser via neb_search_commit. `default` uses system Chrome and must only be selected as an explicitly authorized fallback."
-				}
+				},
+				protocolsIo: PROTOCOLS_IO_OPTIONS_SCHEMA
 			},
 			required: ["query"]
 		},
@@ -9060,7 +9658,8 @@ const TOOLS = [
 								enum: ["explicit", "all"]
 							},
 							limit: { type: "number" },
-							browser: { type: "string" }
+							browser: { type: "string" },
+							protocolsIo: PROTOCOLS_IO_OPTIONS_SCHEMA
 						},
 						required: [
 							"query",
@@ -9091,6 +9690,10 @@ const TOOLS = [
 						type: "array",
 						items: { type: "object" }
 					},
+					protocolsIo: {
+						type: "object",
+						description: "Saved search state, searchId, publisher-provided facets and counts; rendered facet subsets may be incomplete."
+					},
 					hostBrowserTask: { type: "object" }
 				},
 				required: [
@@ -9101,6 +9704,36 @@ const TOOLS = [
 					"results"
 				]
 			} },
+			required: ["artifact"]
+		}
+	},
+	{
+		name: "refine_search",
+		description: "Refine the protocols.io portion of a previous search using artifact.protocolsIo.searchId. Re-runs the full publisher query, not just returned rows. changes replaces only supplied options; [] clears a facet/fields/tags, empty strings clear advanced text/date fields (clear dates together). Query and limit are preserved. Filter/sort edits reset page to 1 unless explicitly supplied. Mode changes require a new search. Search IDs expire in 30 minutes or on server restart; each response has a new ID. No other sources are searched.",
+		securitySchemes: OPTIONAL_LABEE_AUTH,
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: false,
+			openWorldHint: true
+		},
+		_meta: {
+			securitySchemes: OPTIONAL_LABEE_AUTH,
+			"openai/toolInvocation/invoking": "Refining protocols.io search…",
+			"openai/toolInvocation/invoked": "protocols.io refinement complete"
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				searchId: { type: "string" },
+				changes: PROTOCOLS_IO_OPTIONS_SCHEMA
+			},
+			required: ["searchId", "changes"],
+			additionalProperties: false
+		},
+		outputSchema: {
+			type: "object",
+			properties: { artifact: { type: "object" } },
 			required: ["artifact"]
 		}
 	},
@@ -9359,7 +9992,7 @@ function toolArtifact(text, artifact) {
 	return {
 		content: [{
 			type: "text",
-			text
+			text: artifact.protocolsIo ? `${text}\n\n${requestBlock("protocols.io search state and available filters", artifact.protocolsIo)}` : text
 		}],
 		structuredContent: { artifact },
 		isError: false
@@ -9375,9 +10008,36 @@ function requestBlock(title, request) {
 	].join("\n");
 }
 function searchArtifact(response, request, hostBrowserTask) {
+	const source = response.sources.find((s) => s.id === "protocols-io");
+	const options = effectiveProtocolsIoSearchOptions(request.protocolsIo);
+	const protocolsIo = source ? {
+		...protocolsIoSearches.save({
+			query: request.query,
+			options,
+			limit: request.limit
+		}),
+		source: "protocols-io",
+		query: request.query,
+		mode: options.mode ?? "simple",
+		options,
+		sortBy: options.sortBy ?? "relevance",
+		order: options.order ?? (options.sortBy === "title" ? "asc" : "desc"),
+		page: options.page ?? 1,
+		selectedFilters: selectedProtocolsIoFilters(options),
+		searchUrl: protocolsIoSearchUrl(request.query, options),
+		returnedCount: source.count,
+		totalMatches: source.protocolsIo?.totalMatches ?? null,
+		facetsAvailable: source.protocolsIo?.facetsAvailable ?? false,
+		availableFacets: source.protocolsIo?.availableFacets ?? {},
+		facetStatus: options.mode === "advanced" ? "unsupported-in-advanced-mode" : source.protocolsIo?.facetsAvailable ? source.route === "protocols-io-api" ? "publisher-api-subset" : "publisher-rendered-subset" : "unavailable",
+		route: source.route ?? null
+	} : void 0;
 	return {
 		kind: "labee.search",
-		request,
+		request: protocolsIo ? {
+			...request,
+			protocolsIo: options
+		} : request,
 		summary: {
 			resultCount: response.results.length,
 			sourceCount: response.sources.length,
@@ -9385,6 +10045,7 @@ function searchArtifact(response, request, hostBrowserTask) {
 		},
 		sources: response.sources,
 		results: response.results,
+		...protocolsIo ? { protocolsIo } : {},
 		...hostBrowserTask ? { hostBrowserTask } : {}
 	};
 }
@@ -9431,10 +10092,25 @@ async function callTool(name, args) {
 			...lines,
 			"",
 			"Primary publisher search: AWS Browserless (when BROWSERLESS_TOKEN is configured).",
+			"protocols.io: native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured; Browserless fallback preserves filters and sorting.",
 			`Fallback web-search providers (vendors): ${providers}.`,
 			`Fallback journal providers: ${journalProviderOrder().join(" → ")}.`,
 			"Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for vendor-search fallback; set PROTOCOLS_CONTACT_EMAIL to enable the Unpaywall open-access full-text fallback."
 		].join("\n"));
+	}
+	if (name === "refine_search") try {
+		const state = protocolsIoSearches.refine(args.searchId, args.changes);
+		return await callTool("search", {
+			query: state.query,
+			sources: ["protocols-io"],
+			limit: state.limit,
+			protocolsIo: {
+				mode: "simple",
+				...state.options
+			}
+		});
+	} catch (error) {
+		return toolText(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
 	}
 	if (name === "search") {
 		const query = typeof args.query === "string" ? args.query : "";
@@ -9448,19 +10124,30 @@ async function callTool(name, args) {
 			"default",
 			"host"
 		].includes(String(args.browser)) ? args.browser : void 0;
+		let protocolsIo;
+		try {
+			protocolsIo = parseProtocolsIoSearchOptions(args.protocolsIo);
+		} catch (error) {
+			return toolText(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
+		}
+		if (args.protocolsIo !== void 0 && (!args.protocolsIo || typeof args.protocolsIo !== "object" || Array.isArray(args.protocolsIo))) return toolText("Error: `protocolsIo` must be an object.", true);
+		if (protocolsIo && sources && !sources.some((source) => source.toLowerCase() === "protocols-io")) return toolText("Error: `protocolsIo` options require `protocols-io` in `sources`.", true);
+		if (protocolsIo && Boolean(protocolsIo.publishedFrom) !== Boolean(protocolsIo.publishedTo)) return toolText("Error: protocols.io publication filtering requires both `publishedFrom` and `publishedTo`.", true);
 		const request = {
 			query: query.trim(),
 			sources: sources ?? [],
 			sourceSelection: sources ? "explicit" : "all",
 			limit,
-			browser: browserMode ?? "browserless-default"
+			browser: browserMode ?? "browserless-default",
+			...protocolsIo ? { protocolsIo } : {}
 		};
 		const wantsNeb = sources ? sources.some((source) => source.trim().toLowerCase() === "neb") : true;
 		if (browserMode === "host" && wantsNeb) {
 			const nonNebSources = sources ? sources.filter((source) => source.trim().toLowerCase() !== "neb") : [...VENDOR_IDS.filter((source) => source !== "neb"), ...looksLikeEnzymeQuery(query) ? ["rebase"] : []];
 			const base = nonNebSources.length > 0 ? await search(query, {
 				sources: nonNebSources,
-				limit
+				limit,
+				...protocolsIo ? { protocolsIo } : {}
 			}) : {
 				query: query.trim(),
 				results: [],
@@ -9481,7 +10168,8 @@ async function callTool(name, args) {
 		}
 		const resp = await search(query, {
 			...sources ? { sources } : {},
-			limit
+			limit,
+			...protocolsIo ? { protocolsIo } : {}
 		});
 		const browser = browserAdapterForMode(browserMode === "host" ? void 0 : browserMode);
 		const captures = [];
@@ -10112,9 +10800,13 @@ function isResidentialToolCall(value) {
 	if (Array.isArray(value)) return value.some(isResidentialToolCall);
 	if (!value || typeof value !== "object") return false;
 	const request = value;
-	return request.method === "tools/call" && (request.params?.name === "search" || request.params?.name === "fetch");
+	return request.method === "tools/call" && [
+		"search",
+		"refine_search",
+		"fetch"
+	].includes(String(request.params?.name));
 }
-/** Only search/fetch can cause a publisher browser route. */
+/** Search, refinement, and fetch can cause a publisher browser route. */
 function messageMayNeedResidential(raw) {
 	return isResidentialToolCall(parseJson(raw));
 }

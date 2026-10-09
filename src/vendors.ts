@@ -11,6 +11,8 @@
 // blocked (it's a URL, not a fetch), so it's the guaranteed-useful part of
 // every result even when live extraction is unavailable.
 
+import { protocolsIoSearchUrl, type ProtocolsIoSearchOptions } from "./protocols-io.ts";
+
 export interface JournalInfo {
   /** Exact Crossref `container-title` for this journal (also Semantic Scholar venue). */
   crossrefContainer: string;
@@ -74,7 +76,7 @@ export interface Vendor {
   /** Scholarly-API metadata (journals only). */
   journal?: JournalInfo;
   /** Build the source's own on-site search URL for `query`. */
-  searchUrl: (query: string) => string;
+  searchUrl: (query: string, protocolsIo?: ProtocolsIoSearchOptions) => string;
   /** URL shape of a genuine result on the publisher's rendered search page. */
   publisherResult: RegExp;
   /** Optional result-link class needed to exclude same-host navigation links. */
@@ -190,7 +192,7 @@ export const VENDORS: Vendor[] = [
     fetchability: "full",
     publisherFetch: "full",
     searchSite: "protocols.io",
-    searchUrl: (q) => `https://www.protocols.io/search?q=${enc(q)}`,
+    searchUrl: (q, options) => protocolsIoSearchUrl(q, options),
     publisherResult: /^https?:\/\/(?:www\.)?protocols\.io\/view\//i,
   },
   {

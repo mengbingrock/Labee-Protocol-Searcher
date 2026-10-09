@@ -112,6 +112,61 @@ describe("searchProtocols", () => {
     });
   });
 
+  it("passes protocols.io filters to Browserless and preserves the requested publisher order", async () => {
+    process.env.BROWSERLESS_TOKEN = "t";
+    process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";
+    let renderedUrl = "";
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      if (!url.includes("/content?")) throw new Error(`unexpected fallback: ${url}`);
+      renderedUrl = (JSON.parse(String(init?.body)) as { url: string }).url;
+      return new Response(
+        `<html><head><title>Search</title></head><body>` +
+          `<a href="https://www.protocols.io/view/dna-extraction-first/v1">DNA extraction first</a>` +
+          `<a href="https://www.protocols.io/view/pcr-second/v1">PCR protocol second</a>` +
+          `</body></html>`,
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const resp = await searchProtocols("pcr", {
+      vendors: ["protocols-io"],
+      limit: 2,
+      protocolsIo: { sortBy: "mentions", order: "desc", techniques: ["PCR"] },
+      providerOpts: { fetchImpl: fakeFetch },
+    });
+
+    const rendered = new URL(renderedUrl);
+    expect(rendered.searchParams.get("sort_by")).toBe("mentions");
+    expect(rendered.searchParams.get("sort_dir")).toBe("desc");
+    expect(rendered.searchParams.get("techniques")).toBe("PCR");
+    expect(resp.vendors[0]!.results.map((result) => result.title)).toEqual([
+      "DNA extraction first",
+      "PCR protocol second",
+    ]);
+  });
+
+  it("does not replace a failed filtered protocols.io search with unfiltered web results", async () => {
+    delete process.env.BROWSERLESS_TOKEN;
+    process.env.PROTOCOLS_SEARCH_PROVIDER = "brave";
+    process.env.BRAVE_API_KEY = "k";
+    const seen: string[] = [];
+    const fakeFetch = (async (url: string) => {
+      seen.push(url);
+      return new Response(MIXED_BRAVE, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const resp = await searchProtocols("pcr", {
+      vendors: ["protocols-io"],
+      protocolsIo: { mode: "advanced", tags: ["diagnostics"], sortBy: "mentions" },
+      providerOpts: { fetchImpl: fakeFetch },
+    });
+
+    expect(resp.partial).toBe(true);
+    expect(resp.vendors[0]!.results).toEqual([]);
+    expect(resp.vendors[0]!.searchUrl).toContain("is_advanced=1");
+    expect(seen).toEqual([]);
+  });
+
   it("uses the database/web provider only after the publisher page has no credible results", async () => {
     process.env.BROWSERLESS_TOKEN = "t";
     process.env.BROWSERLESS_URL = "https://browserless.truegrit.dev";

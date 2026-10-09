@@ -59,6 +59,7 @@ describe("MCP Streamable HTTP transport", () => {
       "fetch",
       "list_sources",
       "neb_search_commit",
+      "refine_search",
       "search",
     ]);
   });

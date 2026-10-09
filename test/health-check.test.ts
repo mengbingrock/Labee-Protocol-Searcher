@@ -224,6 +224,12 @@ describe("renderBlock", () => {
 });
 
 describe("summarize", () => {
+  it("counts native protocols.io discovery as publisher search", () => {
+    const apiReport = { ...report, sources: [{ id: "protocols-io", count: 3, searchRoute: "protocols-io-api", fetchStatus: "ok", drift: "" }] };
+    expect(summarize(apiReport)).toMatchObject({ publisherSearches: 1, publisherSources: 1 });
+    expect(renderBlock(apiReport)).toContain("protocols.io native API");
+    expect(renderBlock(apiReport)).not.toContain("fallback · `protocols-io-api`");
+  });
   it("counts configured backends separately from unconfigured ones", () => {
     const row = summarize(report);
     // 3 providers, one of them unconfigured: 1 up out of 2 configured.

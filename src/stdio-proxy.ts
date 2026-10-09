@@ -79,10 +79,10 @@ function isResidentialToolCall(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const request = value as { method?: unknown; params?: { name?: unknown } };
   return request.method === "tools/call"
-    && (request.params?.name === "search" || request.params?.name === "fetch");
+    && ["search", "refine_search", "fetch"].includes(String(request.params?.name));
 }
 
-/** Only search/fetch can cause a publisher browser route. */
+/** Search, refinement, and fetch can cause a publisher browser route. */
 export function messageMayNeedResidential(raw: string): boolean {
   return isResidentialToolCall(parseJson(raw));
 }

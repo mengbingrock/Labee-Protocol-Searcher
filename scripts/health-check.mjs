@@ -402,6 +402,7 @@ function sourceCell(row) {
 }
 
 function searchRouteCell(row) {
+  if (row.searchRoute === "protocols-io-api") return `${OK} protocols.io native API`;
   if (row.searchRoute === "publisher-browserless") return `${OK} AWS Browserless`;
   if (row.searchRoute === "publisher-browserless-residential") {
     return `${OK} AWS Browserless · residential`;
@@ -449,7 +450,7 @@ export function summarize(report) {
     sourcesWithHits: sources.filter((s) => s.count > 0).length,
     sourcesProbed: sources.length,
     publisherSearches: publisherSources.filter((s) =>
-      s.searchRoute?.startsWith("publisher-browserless"),
+      s.searchRoute?.startsWith("publisher-browserless") || s.searchRoute === "protocols-io-api",
     ).length,
     publisherSources: publisherSources.length,
     residentialSearches: publisherSources.filter(
@@ -568,7 +569,8 @@ function renderBlock(report, history = []) {
   lines.push(
     "The scheduled run searches every declared protocol journal and vendor, then calls `fetch` " +
       "for each source's top result. It additionally fetches every unique journal DOI returned " +
-      "by the sweep. Publisher search uses the AWS Browserless deployment first; this report " +
+      "by the sweep. Publisher search uses the AWS Browserless deployment first, except protocols.io " +
+      "uses its native API when configured; this report " +
       "shows when a scholarly or web database had to answer instead.",
   );
   lines.push("");

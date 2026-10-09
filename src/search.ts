@@ -1,7 +1,8 @@
 // Orchestrates a protocol search across sources.
 //
-//   - Every source first uses its own rendered publisher search page through
-//     the configured AWS Browserless deployment.
+//   - protocols.io uses its native JSON API when a client token is configured.
+//   - Other sources, and protocols.io fallback, use rendered publisher search
+//     through the configured AWS Browserless deployment.
 //   - A journal publisher miss falls back to scholarly APIs.
 //   - A reagent/vendor publisher miss falls back to the keyed web-search chain.
 //
@@ -15,9 +16,16 @@ import { resolveVendors, getVendor, type Fetchability, type Vendor } from "./ven
 import { looksLikeEnzymeQuery, searchRebase } from "./rebase.ts";
 import { assessDoiAvailability, type DoiAvailabilityEvidence } from "./availability.ts";
 import { searchPublisher } from "./publisher-search.ts";
+import { protocolsIoApiAvailable, searchProtocolsIoApi } from "./protocols-io-api.ts";
 import { bioProtocolDoiFromUrl } from "./fulltext.ts";
+import type { ProtocolsIoFacets } from "./protocols-io-refinement.ts";
+import {
+  hasProtocolsIoSearchOptions,
+  type ProtocolsIoSearchOptions,
+} from "./protocols-io.ts";
 
 export interface VendorResults {
+  protocolsIo?: ProtocolsIoFacets;
   id: string;
   name: string;
   /** Deterministic deep link into the source's own search page. */
@@ -57,6 +65,8 @@ export interface SearchOptions {
   concurrency?: number;
   /** Forwarded to providers / journal APIs (timeout, fetch injection). */
   providerOpts?: ProviderOptions;
+  /** Source-specific filters for protocols.io. Ignored by every other source. */
+  protocolsIo?: ProtocolsIoSearchOptions;
 }
 
 /** Normalize a URL to `host/path` without the `www.` prefix, lowercased. */
@@ -128,21 +138,43 @@ export async function searchProtocols(
   const batchSize = Math.max(1, opts.batchSize ?? 1);
   const concurrency = Math.max(1, opts.concurrency ?? 4);
   const providerOpts = opts.providerOpts ?? {};
+  const customizedProtocolsIo = hasProtocolsIoSearchOptions(opts.protocolsIo);
 
   const buckets = new Map<string, VendorResults>(
     vendors.map((v) => [
       v.id,
-      { id: v.id, name: v.name, searchUrl: v.searchUrl(trimmed), results: [] },
+      {
+        id: v.id,
+        name: v.name,
+        searchUrl: v.searchUrl(trimmed, v.id === "protocols-io" ? opts.protocolsIo : undefined),
+        results: [],
+      },
     ]),
   );
   let partial = false;
 
-  // --- Primary: each publisher's own rendered search page. ---
+  // --- Primary: protocols.io native API, otherwise rendered publisher search. ---
   const needsFallback = new Set<string>();
   await mapPool(vendors, Math.min(concurrency, 2), async (vendor) => {
     const bucket = buckets.get(vendor.id)!;
-    const outcome = await searchPublisher(vendor, trimmed, limit, providerOpts);
+    const filteredProtocolsIo = vendor.id === "protocols-io" && customizedProtocolsIo;
+    if (vendor.id === "protocols-io" && protocolsIoApiAvailable()) {
+      const api = await searchProtocolsIoApi(trimmed, limit, opts.protocolsIo, providerOpts);
+      bucket.providers = [{ id: "protocols-io-api", status: api.status, count: api.results.length,
+        elapsedMs: api.elapsedMs, ...(api.error ? { error: api.error } : {}) }];
+      if (api.status === "ok") {
+        bucket.results = api.results;
+        bucket.source = "protocols-io-api";
+        if (api.protocolsIo) bucket.protocolsIo = api.protocolsIo;
+        return;
+      }
+    }
+    const outcome = await searchPublisher(vendor, trimmed, limit, providerOpts, {
+      searchUrl: bucket.searchUrl,
+      preserveOrder: vendor.id === "protocols-io",
+    });
     bucket.providers = [
+      ...(bucket.providers ?? []),
       {
         id: "publisher-browserless",
         status: outcome.status,
@@ -151,9 +183,17 @@ export async function searchProtocols(
         ...(outcome.error ? { error: outcome.error } : {}),
       },
     ];
-    if (outcome.results.length > 0) {
+    if (outcome.protocolsIo) bucket.protocolsIo = outcome.protocolsIo;
+    if (outcome.results.length > 0 || outcome.protocolsIo?.totalMatches === 0) {
       bucket.results = outcome.results;
       if (outcome.source) bucket.source = outcome.source;
+    } else if (filteredProtocolsIo) {
+      // A generic web-search fallback cannot enforce protocols.io's sort,
+      // facets, advanced fields, or date constraints. Returning unfiltered
+      // rows would silently violate the request, so keep the exact search URL
+      // and surface the publisher-search failure instead.
+      partial = true;
+      bucket.error = outcome.error ?? "filtered protocols.io search returned no results";
     } else {
       needsFallback.add(vendor.id);
     }
@@ -290,6 +330,7 @@ export interface UnifiedResult {
 }
 
 export interface SourceStatus {
+  protocolsIo?: ProtocolsIoFacets;
   id: string;
   name: string;
   /** "journal" | "vendor" | "database". */
@@ -372,6 +413,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
         ...(opts.batchSize !== undefined ? { batchSize: opts.batchSize } : {}),
         ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
         ...(opts.providerOpts ? { providerOpts: opts.providerOpts } : {}),
+        ...(opts.protocolsIo ? { protocolsIo: opts.protocolsIo } : {}),
       });
 
   const results: UnifiedResult[] = [];
@@ -386,7 +428,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
     // an echo that adds quotes the real query never had reads as an exact-phrase
     // search and invites "loosen the quoting" fixes for a non-existent problem.
     const effectiveQuery = vendor
-      ? b.source?.startsWith("publisher-browserless")
+      ? b.source?.startsWith("publisher-browserless") || b.source === "protocols-io-api"
         ? `${trimmed} on ${vendor.searchSite}`
         : kind === "journal"
           ? `${trimmed} in ${b.name}`
@@ -454,6 +496,7 @@ export async function search(query: string, opts: UnifiedOptions = {}): Promise<
       name: b.name,
       kind,
       searchUrl: b.searchUrl,
+      ...(b.protocolsIo ? { protocolsIo: b.protocolsIo } : {}),
       ...(effectiveQuery ? { query: effectiveQuery } : {}),
       ...(b.source ? { route: b.source } : {}),
       count: rows.length,

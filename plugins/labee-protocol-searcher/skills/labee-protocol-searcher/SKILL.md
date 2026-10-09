@@ -15,22 +15,41 @@ Use `labee_auth` when the user asks to connect, disconnect, or check their Labee
 
 The plugin packages one `labee-source-*` skill for every searchable publisher, supplier, and REBASE. Users enable or disable those skills from the plugin configuration page.
 
-Before every Labee `search` call:
+Before every Labee `search` or `refine_search` call:
 
 1. Inspect the available skill metadata for enabled skills whose names begin with `labee-source-` (a host may prefix the plugin name before the skill name).
 2. Read each enabled selector's exact source id from its description and pass all enabled ids in `sources`.
-3. If the user explicitly asks for a narrower source set, intersect it with the enabled ids. Never query a source whose selector skill is disabled; tell the user to enable that source in the plugin configuration page.
+3. If the user explicitly asks for a narrower source set, intersect it with the enabled ids. Never query a source whose selector skill is disabled; tell the user to enable that source in the plugin configuration page. `refine_search` searches only protocols.io; recheck that its selector is enabled even if a searchId was obtained earlier.
 4. If no `labee-source-*` skills exist, treat the installation as a legacy client and omit `sources` to preserve search-all behavior.
 
 Source toggles are workflow preferences, not authorization controls. Do not claim that disabling a selector revokes access to the underlying public source.
 
 ## Visible execution details
 
-Before every Labee `search` call, tell the user the exact parameters in one concise line: `query`, `sources`, `limit`, and `browser`. Spell out that an omitted browser means Labee's default AWS Browserless route. Do not use a generic message such as “Searching” when the parameters are known.
+Before every Labee `search` call, tell the user the exact parameters in one concise line: `query`, `sources`, `limit`, `browser`, and any source-specific options. Spell out that an omitted browser means Labee's default AWS Browserless route. Do not use a generic message such as “Searching” when the parameters are known.
 
 Before every Labee `fetch` call, tell the user the exact `id` or `ids`, optional `section`, and `browser` mode. After the call, report each returned id's `_status`, `_reason` when present, and whether the response contains full text, an abstract, or only a link.
 
 Treat `structuredContent.artifact` returned by `search` and `fetch` as the canonical machine-readable artifact. Use its request, summary, result ids, source routes, and fetch details when presenting the outcome. Do not hide the artifact behind a generic success sentence.
+
+## protocols.io search options
+
+When `protocols-io` is selected, translate requested ordering and filters into the `protocolsIo` object on `search`:
+
+- Use `sortBy: "relevance" | "date" | "title" | "mentions" | "wfm"`; `mentions` is the protocols.io **Impact** sort and `wfm` is **Works for me**.
+- Use `order: "asc" | "desc"` and one-indexed `page` in either mode. In `mode: "simple"` (default), use `access`, `techniques`, `antibodies`, `organisms`, and `cellLines` as native result facets.
+- Before-search criteria use explicit `mode: "advanced"`. Map user requests for tags or protocol keywords to `tags`. Never silently convert sidebar facets to advanced fields or mix the two modes.
+- Use `fields` for protocols.io advanced field search. Supported field ids are `all`, `all_entities.techniques`, `all_entities.antibodies`, `all_entities.organisms`, `all_entities.cell_lines`, `title`, `authors_string`, `orcid`, `affiliation`, `funders_string`, `funder_grant`, `abstract`, `keywords`, `equipment_title`, `equipment_sku`, `reagent_title`, `reagent_rrid`, `reagent_cas_number`, and `reagent_catalog_number`.
+- Use `journalTitle`, `articleDoi`, and the paired `publishedFrom`/`publishedTo` ISO dates for the remaining advanced filters.
+- Advanced access constraints use `openAccess` and `springerProtocol` booleans, not the simple-mode `access` union.
+
+With a backend `PROTOCOLS_IO_ACCESS_TOKEN`, protocols.io searches use the native JSON API (`route: protocols-io-api`) first and Browserless as fallback. This is the website's observed `/api/v1/search`, distinct from its documented REST API. Simple searches default to Open Access; `access: []` clears that constraint. Announce the requested browser parameter, then report the route that actually ran.
+
+After search, present `artifact.protocolsIo.searchId`, effective options, `totalMatches`, and the available publisher facet choices/counts. A null total is unknown, not zero. `availableFacets` contains publisher API or rendered subsets and `complete: false`; API entity groups may be capped at 100, and missing or collapsed rendered groups are not evidence that no options exist. Advanced searches do not expose native sidebar facets.
+
+To narrow results, call `refine_search` with that `searchId` and `changes`, e.g. `{"access":["open_access"],"techniques":["PCR"]}`. This re-runs the full publisher query, not a local filter of the returned rows. Announce the searchId and exact changes before the call, then show the new artifact/state. Arrays replace the named selection; `[]` clears it; omitted options remain unchanged. Filter/sort changes reset the page to 1 unless explicitly supplied. `{"page":2}` only changes the page. Advanced criteria can also be revised in place; switching between simple and advanced requires a fresh `search`. Search IDs expire after 30 minutes, server restart, or cache eviction; on expiry reissue the known original query/options with `search`. Never broaden a failed filtered search through an unfiltered fallback.
+
+Do not apply `protocolsIo` options to other sources. If protocols.io is disabled in plugin settings, do not work around that preference by issuing an unfiltered search elsewhere.
 
 ## Browser preference
 

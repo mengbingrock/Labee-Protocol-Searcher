@@ -3,6 +3,7 @@
 // proxy in ./stdio-proxy.ts and forwards every message to the remote service.
 
 import { readFileSync } from "node:fs";
+import { ProtocolsIoSearchStore, selectedProtocolsIoFilters } from "./protocols-io-refinement.ts";
 import { search, renderSearch } from "./search.ts";
 import { VENDORS, VENDOR_IDS, type Fetchability } from "./vendors.ts";
 import { providerStatus } from "./providers/registry.ts";
@@ -23,9 +24,79 @@ import {
   type ChromeSessionCaptureInput,
   type HostBrowserCaptureInput,
 } from "./agent/host-browser.ts";
+import {
+  PROTOCOLS_IO_ACCESS_VALUES,
+  PROTOCOLS_IO_ADVANCED_FIELDS,
+  PROTOCOLS_IO_ORDER_VALUES,
+  PROTOCOLS_IO_SORT_VALUES,
+  parseProtocolsIoSearchOptions,
+  effectiveProtocolsIoSearchOptions,
+  protocolsIoSearchUrl,
+  type ProtocolsIoSearchOptions,
+} from "./protocols-io.ts";
 
 /** Every searchable source id: the vendors/journals plus the REBASE database. */
 const SOURCE_IDS = [...VENDOR_IDS, "rebase"] as const;
+
+const PROTOCOLS_IO_OPTIONS_SCHEMA = {
+  type: "object",
+  description:
+    "Optional protocols.io-only filters. Applied only when `protocols-io` is among the selected sources.",
+  properties: {
+    mode: { type: "string", enum: ["simple", "advanced"], description: "Defaults to simple. Advanced fields/tags require explicit advanced mode. Sidebar facets are simple-only." },
+    openAccess: { type: "boolean", description: "Advanced-mode open-access constraint (not the sidebar access union)." },
+    springerProtocol: { type: "boolean", description: "Advanced-mode Springer constraint." },
+    sortBy: {
+      type: "string",
+      enum: PROTOCOLS_IO_SORT_VALUES,
+      description: "protocols.io sort: relevance, date, title, mentions (Impact), or wfm (Works for me).",
+    },
+    order: {
+      type: "string",
+      enum: PROTOCOLS_IO_ORDER_VALUES,
+      description: "Ascending or descending sort direction (`sort_dir`).",
+    },
+    page: { type: "integer", minimum: 1, description: "One-indexed protocols.io result page." },
+    access: {
+      type: "array",
+      items: { type: "string", enum: PROTOCOLS_IO_ACCESS_VALUES },
+      description: "Access filters: open_access and/or springer_protocols.",
+    },
+    techniques: { type: "array", items: { type: "string" } },
+    antibodies: { type: "array", items: { type: "string" } },
+    organisms: { type: "array", items: { type: "string" } },
+    cellLines: { type: "array", items: { type: "string" } },
+    tags: {
+      type: "array",
+      items: { type: "string" },
+      description: "Keyword/tag filters. Each value becomes a protocols.io advanced `keywords` field.",
+    },
+    fields: {
+      type: "array",
+      description:
+        "Advanced field/value filters. Scientific concepts, title, author, ORCID, affiliation, funder, " +
+        "abstract, keywords, equipment, and reagent identifiers are supported.",
+      items: {
+        type: "object",
+        properties: {
+          field: { type: "string", enum: PROTOCOLS_IO_ADVANCED_FIELDS },
+          value: { type: "string" },
+        },
+        required: ["field", "value"],
+      },
+    },
+    journalTitle: { type: "string" },
+    articleDoi: { type: "string" },
+    publishedFrom: {
+      type: "string",
+      description: "Publication-range start in YYYY-MM-DD form; provide publishedTo too.",
+    },
+    publishedTo: {
+      type: "string",
+      description: "Publication-range end in YYYY-MM-DD form; provide publishedFrom too.",
+    },
+  },
+} as const;
 
 // Versions we speak. The spec requires echoing the client's requested version
 // when we support it, else replying with our latest (the client then decides).
@@ -65,6 +136,7 @@ const OPTIONAL_LABEE_AUTH = [
 ] as const;
 /** Search-to-fetch browser handoff for the lifetime of the authoritative MCP process. */
 const sameProfileBrowserById = new Map<string, "cdp" | "default">();
+const protocolsIoSearches = new ProtocolsIoSearchStore();
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -95,15 +167,22 @@ export const TOOLS = [
     description:
       "Search laboratory-protocol, reagent, and restriction-enzyme sources for a technique, kit, " +
       "reagent, product, enzyme, or recognition site. Every journal/vendor is searched on its own " +
-      "publisher page through AWS Browserless first. Failed journal searches fall back to scholarly " +
+      "publisher page through AWS Browserless first, except protocols.io uses its native JSON search API " +
+      "when PROTOCOLS_IO_ACCESS_TOKEN is configured, with Browserless as fallback. Failed journal searches fall back to scholarly " +
       "APIs (Crossref/Europe PMC), and failed vendor searches fall back to site-scoped web search. " +
       "Restriction enzymes use REBASE (NEB's " +
       "open database — auto-included for enzyme-shaped queries like 'EcoRI' or 'GAATTC'). Returns a " +
       "ranked list of results, each with a stable `id`, a `source`, and a `fetchable` grade — " +
       "fresh exact DOI observations from the daily CI index win, current OA metadata is next, and " +
       "the source grade is the fallback prior. Call `fetch` with a result's id to read its " +
-      "content; vendor pages included. Prefer Codex's integrated Browser for browser tasks because it " +
-      "uses a separate profile and provides a shared view. For NEB, pass `browser: host` so both the " +
+      "content; vendor pages included. " +
+      "For protocols.io, pass `protocolsIo` to control native sort/order, page, access, scientific " +
+      "facets, tags/keywords, advanced fields, journal/DOI, and publication dates. " +
+      "Advanced fields require mode=advanced and cannot be mixed with sidebar facets. " +
+      "Returns artifact.protocolsIo with searchId, query state, publisher facet counts and totalMatches " +
+      "(null when unavailable). Use refine_search to narrow the full query afterward. " +
+      "Prefer Codex's integrated Browser for browser tasks because it uses a separate profile and " +
+      "provides a shared view. For NEB, pass `browser: host` so both the " +
       "rendered search and selected result pages use the integrated Browser; commit " +
       "those captures with `neb_search_commit`, and a following `fetch` returns the same captured HTML. " +
       "Do not silently switch to system Chrome. Use `browser: default` or `cdp` only when the integrated " +
@@ -136,6 +215,7 @@ export const TOOLS = [
             "neb_search_commit. `default` uses system Chrome and must " +
             "only be selected as an explicitly authorized fallback.",
         },
+        protocolsIo: PROTOCOLS_IO_OPTIONS_SCHEMA,
       },
       required: ["query"],
     },
@@ -154,6 +234,7 @@ export const TOOLS = [
                 sourceSelection: { type: "string", enum: ["explicit", "all"] },
                 limit: { type: "number" },
                 browser: { type: "string" },
+                protocolsIo: PROTOCOLS_IO_OPTIONS_SCHEMA,
               },
               required: ["query", "sources", "sourceSelection", "limit", "browser"],
             },
@@ -168,11 +249,37 @@ export const TOOLS = [
             },
             sources: { type: "array", items: { type: "object" } },
             results: { type: "array", items: { type: "object" } },
+            protocolsIo: { type: "object", description: "Saved search state, searchId, publisher-provided facets and counts; rendered facet subsets may be incomplete." },
             hostBrowserTask: { type: "object" },
           },
           required: ["kind", "request", "summary", "sources", "results"],
         },
       },
+      required: ["artifact"],
+    },
+  },
+  {
+    name: "refine_search",
+    description: "Refine the protocols.io portion of a previous search using artifact.protocolsIo.searchId. Re-runs the full publisher query, not just returned rows. changes replaces only supplied options; [] clears a facet/fields/tags, empty strings clear advanced text/date fields (clear dates together). Query and limit are preserved. Filter/sort edits reset page to 1 unless explicitly supplied. Mode changes require a new search. Search IDs expire in 30 minutes or on server restart; each response has a new ID. No other sources are searched.",
+    securitySchemes: OPTIONAL_LABEE_AUTH,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    _meta: {
+      securitySchemes: OPTIONAL_LABEE_AUTH,
+      "openai/toolInvocation/invoking": "Refining protocols.io search…",
+      "openai/toolInvocation/invoked": "protocols.io refinement complete",
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        searchId: { type: "string" },
+        changes: PROTOCOLS_IO_OPTIONS_SCHEMA,
+      },
+      required: ["searchId", "changes"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: { artifact: { type: "object" } },
       required: ["artifact"],
     },
   },
@@ -379,6 +486,7 @@ interface SearchArtifactRequest {
   sourceSelection: "explicit" | "all";
   limit: number;
   browser: string;
+  protocolsIo?: ProtocolsIoSearchOptions;
 }
 
 interface FetchArtifactRequest {
@@ -389,7 +497,8 @@ interface FetchArtifactRequest {
 
 function toolArtifact(text: string, artifact: Record<string, unknown>): unknown {
   return {
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text: artifact.protocolsIo
+      ? `${text}\n\n${requestBlock("protocols.io search state and available filters", artifact.protocolsIo as object)}` : text }],
     structuredContent: { artifact },
     isError: false,
   };
@@ -410,9 +519,30 @@ function searchArtifact(
   request: SearchArtifactRequest,
   hostBrowserTask?: object,
 ): Record<string, unknown> {
+  const source = response.sources.find(s => s.id === "protocols-io");
+  const options = effectiveProtocolsIoSearchOptions(request.protocolsIo);
+  const protocolsIo = source ? {
+    ...protocolsIoSearches.save({ query: request.query, options, limit: request.limit }),
+    source: "protocols-io",
+    query: request.query,
+    mode: options.mode ?? "simple",
+    options,
+    sortBy: options.sortBy ?? "relevance",
+    order: options.order ?? (options.sortBy === "title" ? "asc" : "desc"),
+    page: options.page ?? 1,
+    selectedFilters: selectedProtocolsIoFilters(options),
+    searchUrl: protocolsIoSearchUrl(request.query, options),
+    returnedCount: source.count,
+    totalMatches: source.protocolsIo?.totalMatches ?? null,
+    facetsAvailable: source.protocolsIo?.facetsAvailable ?? false,
+    availableFacets: source.protocolsIo?.availableFacets ?? {},
+    facetStatus: options.mode === "advanced" ? "unsupported-in-advanced-mode"
+      : source.protocolsIo?.facetsAvailable ? source.route === "protocols-io-api" ? "publisher-api-subset" : "publisher-rendered-subset" : "unavailable",
+    route: source.route ?? null,
+  } : undefined;
   return {
     kind: "labee.search",
-    request,
+    request: protocolsIo ? { ...request, protocolsIo: options } : request,
     summary: {
       resultCount: response.results.length,
       sourceCount: response.sources.length,
@@ -420,6 +550,7 @@ function searchArtifact(
     },
     sources: response.sources,
     results: response.results,
+    ...(protocolsIo ? { protocolsIo } : {}),
     ...(hostBrowserTask ? { hostBrowserTask } : {}),
   };
 }
@@ -489,12 +620,27 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         ...lines,
         "",
         "Primary publisher search: AWS Browserless (when BROWSERLESS_TOKEN is configured).",
+        "protocols.io: native JSON search API when PROTOCOLS_IO_ACCESS_TOKEN is configured; Browserless fallback preserves filters and sorting.",
         `Fallback web-search providers (vendors): ${providers}.`,
         `Fallback journal providers: ${journalProviderOrder().join(" → ")}.`,
         "Set BRAVE_API_KEY or GOOGLE_API_KEY+GOOGLE_CSE_CX for vendor-search fallback; " +
           "set PROTOCOLS_CONTACT_EMAIL to enable the Unpaywall open-access full-text fallback.",
       ].join("\n"),
     );
+  }
+  if (name === "refine_search") {
+    try {
+      const state = protocolsIoSearches.refine(args.searchId, args.changes);
+      // Keep the publisher route even when all filters have been cleared.
+      return await callTool("search", {
+        query: state.query,
+        sources: ["protocols-io"],
+        limit: state.limit,
+        protocolsIo: { mode: "simple", ...state.options },
+      });
+    } catch (error) {
+      return toolText(`Error: ${error instanceof Error ? error.message : String(error)}`, true);
+    }
   }
   if (name === "search") {
     const query = typeof args.query === "string" ? args.query : "";
@@ -507,12 +653,31 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     const browserMode = ["off", "cdp", "default", "host"].includes(String(args.browser))
       ? (args.browser as "off" | "cdp" | "default" | "host")
       : undefined;
+    let protocolsIo: ProtocolsIoSearchOptions | undefined;
+    try { protocolsIo = parseProtocolsIoSearchOptions(args.protocolsIo); }
+    catch (error) { return toolText(`Error: ${error instanceof Error ? error.message : String(error)}`, true); }
+    if (
+      args.protocolsIo !== undefined &&
+      (!args.protocolsIo || typeof args.protocolsIo !== "object" || Array.isArray(args.protocolsIo))
+    ) {
+      return toolText("Error: `protocolsIo` must be an object.", true);
+    }
+    if (protocolsIo && sources && !sources.some((source) => source.toLowerCase() === "protocols-io")) {
+      return toolText("Error: `protocolsIo` options require `protocols-io` in `sources`.", true);
+    }
+    if (protocolsIo && Boolean(protocolsIo.publishedFrom) !== Boolean(protocolsIo.publishedTo)) {
+      return toolText(
+        "Error: protocols.io publication filtering requires both `publishedFrom` and `publishedTo`.",
+        true,
+      );
+    }
     const request: SearchArtifactRequest = {
       query: query.trim(),
       sources: sources ?? [],
       sourceSelection: sources ? "explicit" : "all",
       limit,
       browser: browserMode ?? "browserless-default",
+      ...(protocolsIo ? { protocolsIo } : {}),
     };
     const wantsNeb = sources
       ? sources.some((source) => source.trim().toLowerCase() === "neb")
@@ -525,9 +690,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
             ...(looksLikeEnzymeQuery(query) ? ["rebase"] : []),
           ];
       const base = nonNebSources.length > 0
-        ? await search(query, {
+          ? await search(query, {
             sources: nonNebSources,
             limit,
+            ...(protocolsIo ? { protocolsIo } : {}),
           })
         : { query: query.trim(), results: [], sources: [], unknownSources: [], partial: false };
       const task = prepareHostBrowserSearch(query, limit, base);
@@ -544,6 +710,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
     const resp = await search(query, {
       ...(sources ? { sources } : {}),
       limit,
+      ...(protocolsIo ? { protocolsIo } : {}),
     });
     const browser = browserAdapterForMode(browserMode === "host" ? undefined : browserMode);
     const captures: string[] = [];

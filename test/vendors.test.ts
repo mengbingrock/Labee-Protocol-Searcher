@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { VENDORS, VENDOR_IDS, getVendor, resolveVendors } from "../src/vendors.ts";
+import {
+  parseProtocolsIoSearchOptions,
+  protocolsIoSearchUrl,
+} from "../src/protocols-io.ts";
 
 describe("vendor registry", () => {
   it("lists the ten requested vendors plus protocol journals", () => {
@@ -86,5 +90,83 @@ describe("fetchability grading", () => {
     expect(getVendor("nature-protocols")!.fetchability).not.toBe("full");
     expect(getVendor("promega")!.kind).toBe("vendor");
     expect(getVendor("promega")!.fetchability).toBe("full");
+  });
+});
+
+describe("protocols.io search options", () => {
+  it("builds the native sort, order, page, access, and facet parameters", () => {
+    const url = new URL(protocolsIoSearchUrl("pcr", {
+      sortBy: "mentions",
+      order: "desc",
+      page: 2,
+      access: ["open_access", "springer_protocols"],
+      techniques: ["PCR", "Real-time PCR"],
+      antibodies: ["Anti-Taq"],
+      organisms: ["Homo sapiens"],
+      cellLines: ["HEK293"],
+    }));
+    expect(url.searchParams.get("q")).toBe("pcr");
+    expect(url.searchParams.get("sort_by")).toBe("mentions");
+    expect(url.searchParams.get("sort_dir")).toBe("desc");
+    expect(url.searchParams.get("page_id")).toBe("2");
+    expect(url.searchParams.get("access")).toBe("open_access,springer_protocols");
+    expect(url.searchParams.get("techniques")).toBe("PCR|Real-time PCR");
+    expect(url.searchParams.get("antibodies")).toBe("Anti-Taq");
+    expect(url.searchParams.get("organisms")).toBe("Homo sapiens");
+    expect(url.searchParams.get("cell_lines")).toBe("HEK293");
+  });
+
+  it("encodes tags and every advanced-search family in protocols.io's q object", () => {
+    const url = new URL(protocolsIoSearchUrl("pcr", {
+      sortBy: "title",
+      mode: "advanced",
+      openAccess: true,
+      tags: ["diagnostics"],
+      fields: [
+        { field: "all_entities.techniques", value: "PCR" },
+        { field: "authors_string", value: "Jane Doe" },
+        { field: "reagent_catalog_number", value: "M0491" },
+      ],
+      journalTitle: "Nature Protocols",
+      articleDoi: "10.1000/example",
+      publishedFrom: "2025-01-01",
+      publishedTo: "2026-01-01",
+    }));
+    const q = JSON.parse(url.searchParams.get("q")!) as Record<string, unknown>;
+    expect(url.searchParams.get("is_advanced")).toBe("1");
+    expect(url.searchParams.get("sort_by")).toBe("title");
+    expect(url.searchParams.get("sort_dir")).toBe("asc");
+    expect(q).toMatchObject({
+      fields: [
+        { key: "all", value: "pcr" },
+        { key: "keywords", value: "diagnostics" },
+        { key: "all_entities.techniques", value: "PCR" },
+        { key: "authors_string", value: "Jane Doe" },
+        { key: "reagent_catalog_number", value: "M0491" },
+      ],
+      open_access: true,
+      springer_protocol: false,
+      journal_title: "Nature Protocols",
+      article_doi: "10.1000/example",
+      published_from: "2025-01-01",
+      published_to: "2026-01-01",
+    });
+  });
+
+  it("normalizes valid input without silently dropping invalid constraints", () => {
+    expect(parseProtocolsIoSearchOptions({
+      mode: "advanced",
+      sortBy: "mentions",
+      page: 2,
+      tags: ["PCR", " PCR "],
+      fields: [{ field: "orcid", value: "0000-0001" }],
+    })).toEqual({
+      mode: "advanced",
+      sortBy: "mentions",
+      page: 2,
+      tags: ["PCR"],
+      fields: [{ field: "orcid", value: "0000-0001" }],
+    });
+    expect(() => parseProtocolsIoSearchOptions({ order: "sideways" })).toThrow();
   });
 });

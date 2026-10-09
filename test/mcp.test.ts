@@ -56,6 +56,7 @@ describe("MCP dispatch", () => {
     const tools = (res!.result as { tools: typeof TOOLS }).tools;
     expect(tools.map((t) => t.name)).toEqual([
       "search",
+      "refine_search",
       "neb_search_commit",
       "fetch",
       "chrome_fetch_commit",
@@ -85,6 +86,8 @@ describe("MCP dispatch", () => {
       .toMatchObject({ required: ["artifact"] });
     expect(TOOLS.find((tool) => tool.name === "fetch")?.outputSchema)
       .toMatchObject({ required: ["artifact"] });
+    expect(TOOLS.find((tool) => tool.name === "search")?.inputSchema.properties.protocolsIo)
+      .toMatchObject({ type: "object" });
   });
 
   it("reports default-browser status without launching it", async () => {
@@ -173,6 +176,57 @@ describe("MCP dispatch", () => {
         },
         summary: { resultCount: 1, sourceCount: 1, partial: false },
       });
+    });
+
+    it("passes protocols.io options through and records them in the artifact", async () => {
+      const protocolsIo = {
+        mode: "advanced",
+        sortBy: "mentions",
+        order: "desc",
+        tags: ["PCR", "diagnostics"],
+        fields: [{ field: "all_entities.organisms", value: "Homo sapiens" }],
+      };
+      const res = await dispatch({
+        jsonrpc: "2.0",
+        id: 54,
+        method: "tools/call",
+        params: {
+          name: "search",
+          arguments: {
+            query: "pcr",
+            sources: ["protocols-io"],
+            limit: 3,
+            protocolsIo,
+          },
+        },
+      });
+      expect(search.search).toHaveBeenCalledWith("pcr", {
+        sources: ["protocols-io"],
+        limit: 3,
+        protocolsIo,
+      });
+      const artifact = (res!.result as {
+        structuredContent: { artifact: { request: Record<string, unknown> } };
+      }).structuredContent.artifact;
+      expect(artifact.request).toMatchObject({ protocolsIo });
+    });
+
+    it("rejects protocols.io options when protocols.io is not selected", async () => {
+      const res = await dispatch({
+        jsonrpc: "2.0",
+        id: 55,
+        method: "tools/call",
+        params: {
+          name: "search",
+          arguments: {
+            query: "pcr",
+            sources: ["neb"],
+            protocolsIo: { sortBy: "mentions" },
+          },
+        },
+      });
+      expect(res?.result).toMatchObject({ isError: true });
+      expect(search.search).not.toHaveBeenCalled();
     });
 
     it("delegates NEB search to the host browser and serves committed HTML from cache", async () => {

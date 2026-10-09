@@ -9,6 +9,7 @@ import { awaitResidentialReady, residentialSelectorFor } from "./residential.ts"
 import type { Vendor } from "./vendors.ts";
 
 export interface PublisherSearchOutcome {
+  protocolsIo?: BrowserlessSearchPage["protocolsIo"];
   results: RawResult[];
   source?: "publisher-browserless" | "publisher-browserless-residential";
   status: "ok" | "empty" | "error" | "unavailable";
@@ -18,6 +19,11 @@ export interface PublisherSearchOutcome {
 
 const CHALLENGE =
   /human verification|confirm you are human|verify (?:you are|that you are) human|just a moment|checking your browser|safeLine WAF|access denied|something went wrong/i;
+
+function publisherFacets(page: BrowserlessSearchPage | null): BrowserlessSearchPage["protocolsIo"] {
+  return page && !CHALLENGE.test(`${page.title}\n${page.bodyText.slice(0, 2_000)}`)
+    ? page.protocolsIo : undefined;
+}
 
 function titleScore(title: string): number {
   const text = title.trim();
@@ -78,8 +84,11 @@ function resultsFromPage(
   page: BrowserlessSearchPage,
   query: string,
   limit: number,
+  preserveOrder = false,
 ): RawResult[] {
   if (CHALLENGE.test(`${page.title}\n${page.bodyText.slice(0, 2_000)}`)) return [];
+  // protocols.io shows unrelated popular protocols beneath a confirmed empty search.
+  if (vendor.id === "protocols-io" && page.protocolsIo?.totalMatches === 0) return [];
   const byUrl = new Map<string, RawResult>();
   for (const link of page.links) {
     if (!link.text.trim() || !vendor.publisherResult.test(link.href)) continue;
@@ -96,11 +105,20 @@ function resultsFromPage(
     if (!current) byUrl.set(url, candidate);
     else if (titleScore(candidate.title) > titleScore(current.title)) byUrl.set(url, candidate);
   }
-  return [...byUrl.values()]
+  const results = [...byUrl.values()];
+  if (preserveOrder) return results.slice(0, limit);
+  return results
     .map((result, index) => ({ result, index, score: relevanceScore(result, query) }))
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, limit)
     .map(({ result }) => result);
+}
+
+export interface PublisherSearchRequest {
+  /** Exact source search URL, including source-specific filters. */
+  searchUrl?: string;
+  /** Keep the publisher's order when its own sort controls were requested. */
+  preserveOrder?: boolean;
 }
 
 /** Search one publisher's own rendered search UI, datacenter first. */
@@ -109,6 +127,7 @@ export async function searchPublisher(
   query: string,
   limit: number,
   opts: ProviderOptions = {},
+  request: PublisherSearchRequest = {},
 ): Promise<PublisherSearchOutcome> {
   const started = Date.now();
   const cfg = browserlessConfig();
@@ -121,7 +140,7 @@ export async function searchPublisher(
     };
   }
 
-  const searchUrl = vendor.searchUrl(query);
+  const searchUrl = request.searchUrl ?? vendor.searchUrl(query);
   const entryUrl = vendor.interactiveSearch?.startUrl ?? searchUrl;
   try {
     await opts.validateUrl?.(entryUrl);
@@ -165,9 +184,12 @@ export async function searchPublisher(
     if (residentialSelector) {
       residentialAttempted = true;
       const residential = await runPublisherSearch(residentialSelector);
-      const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit) : [];
-      if (residentialResults.length > 0) {
+      const residentialResults = residential
+        ? resultsFromPage(vendor, residential, query, limit, request.preserveOrder)
+        : [];
+      if (residentialResults.length > 0 || publisherFacets(residential)?.totalMatches === 0) {
         return {
+          ...(residential?.protocolsIo ? { protocolsIo: residential.protocolsIo } : {}),
           results: residentialResults,
           source: "publisher-browserless-residential",
           status: "ok",
@@ -178,9 +200,12 @@ export async function searchPublisher(
   }
 
   const direct = await runPublisherSearch();
-  const directResults = direct ? resultsFromPage(vendor, direct, query, limit) : [];
-  if (directResults.length > 0) {
+  const directResults = direct
+    ? resultsFromPage(vendor, direct, query, limit, request.preserveOrder)
+    : [];
+  if (directResults.length > 0 || publisherFacets(direct)?.totalMatches === 0) {
     return {
+      ...(direct?.protocolsIo ? { protocolsIo: direct.protocolsIo } : {}),
       results: directResults,
       source: "publisher-browserless",
       status: "ok",
@@ -198,9 +223,12 @@ export async function searchPublisher(
     : (residentialSelector ?? residentialSelectorFor(entryUrl));
   if (selector) {
     const residential = await runPublisherSearch(selector);
-    const residentialResults = residential ? resultsFromPage(vendor, residential, query, limit) : [];
-    if (residentialResults.length > 0) {
+    const residentialResults = residential
+      ? resultsFromPage(vendor, residential, query, limit, request.preserveOrder)
+      : [];
+    if (residentialResults.length > 0 || publisherFacets(residential)?.totalMatches === 0) {
       return {
+        ...(residential?.protocolsIo ? { protocolsIo: residential.protocolsIo } : {}),
         results: residentialResults,
         source: "publisher-browserless-residential",
         status: "ok",
@@ -211,6 +239,7 @@ export async function searchPublisher(
 
   return {
     results: [],
+    ...(publisherFacets(direct) ? { protocolsIo: publisherFacets(direct) } : {}),
     status: direct ? "empty" : "error",
     elapsedMs: Date.now() - started,
     error: direct
