@@ -563,11 +563,11 @@ Latest measured result (2026-09-18):
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-10-13T12:54Z** · probe query `PCR purification` (`EcoRI` for REBASE; `PCR` for Morimoto Lab)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-10-14T10:24Z** · probe query `PCR purification` (`EcoRI` for REBASE; `PCR` for Morimoto Lab)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep. Publisher search uses the AWS Browserless deployment first, except protocols.io uses its native API when configured and Morimoto Lab searches its public PDF catalog; this report shows when a scholarly or web database had to answer instead.
 
-❌ **1 backend not answering:** `semanticscholar`. The chains fall through, so search still works as long as one provider per chain is up.
+✅ **All configured backends answered.**
 
 ⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `sigma-aldrich` (graded `none` but the page extracted fine); `emd-millipore` (graded `none` but the page extracted fine).
 
@@ -578,7 +578,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `crossref` | journal | ✅ 3 results |
 | `europepmc` | journal | ✅ 3 results |
 | `openalex` | journal | ✅ 3 results |
-| `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
+| `semanticscholar` | journal | ✅ 3 results |
 | `pubmed` | journal | ✅ 3 results |
 | `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
@@ -613,6 +613,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Publisher search | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-14 | ✅ 6/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | — | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-13 | ⚠️ 5/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-12 | ⚠️ 5/6 | ⚠️ 13/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-11 | ⚠️ 5/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
@@ -642,7 +643,6 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-09-17 | ⚠️ 4/6 | — | ⚠️ 15/16 | ⚠️ 8/16 | `europepmc`, `semanticscholar` | — |
 | 2026-09-16 | ⚠️ 5/6 | — | ⚠️ 15/16 | ⚠️ 8/16 | `semanticscholar` | — |
 | 2026-09-15 | ⚠️ 5/6 | — | ⚠️ 15/16 | ⚠️ 7/16 | `semanticscholar` | `idt` |
-| 2026-09-14 | ⚠️ 5/6 | — | ✅ 16/16 | ⚠️ 10/16 | `semanticscholar` | — |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
