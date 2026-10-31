@@ -563,7 +563,7 @@ Latest measured result (2026-09-18):
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-10-30T11:35Z** · probe query `PCR purification` (`EcoRI` for REBASE; `PCR` for Morimoto Lab)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-10-31T11:06Z** · probe query `PCR purification` (`EcoRI` for REBASE; `PCR` for Morimoto Lab)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep. Publisher search uses the AWS Browserless deployment first, except protocols.io uses its native API when configured and Morimoto Lab searches its public PDF catalog; this report shows when a scholarly or web database had to answer instead.
 
@@ -580,7 +580,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `openalex` | journal | ✅ 3 results |
 | `semanticscholar` | journal | ❌ semanticscholar: Semantic Scholar HTTP 429 |
 | `pubmed` | journal | ✅ 3 results |
-| `brave` | web | ✅ 1 result |
+| `brave` | web | ✅ 2 results |
 | `google` | web | — not configured |
 
 **Sources**
@@ -602,7 +602,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `emd-millipore` | ⚠️ fallback · `brave` | ❌ none | ✅ 3 | ✅ `display-only-full-text` |
 | `takarabio` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `promega` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
-| `idt` | ⚠️ fallback · `brave` | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
+| `idt` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `rebase` | — REBASE flat file | ✅ full | ❌ fetch failed | — not probed |
 
 **Per-DOI retrieval:** 14/21 returned full text in this run. Not persisted: the result depends on the network the probe ran from, so it is reported, not published as a fact.
@@ -613,6 +613,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Publisher search | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-31 | ⚠️ 5/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-30 | ⚠️ 5/6 | ⚠️ 11/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-29 | ⚠️ 5/6 | ⚠️ 13/16 | ⚠️ 16/17 | ⚠️ 13/17 | `semanticscholar` | `star-protocols`, `sigma-aldrich`, `emd-millipore` |
 | 2026-10-28 | ⚠️ 5/6 | ⚠️ 14/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `star-protocols`, `sigma-aldrich`, `emd-millipore` |
@@ -642,7 +643,6 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-10-04 | ⚠️ 5/6 | ⚠️ 11/15 | ⚠️ 15/16 | ⚠️ 13/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-03 | ⚠️ 5/6 | ⚠️ 11/15 | ⚠️ 15/16 | ⚠️ 13/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-02 | ⚠️ 5/6 | ⚠️ 11/15 | ⚠️ 15/16 | ⚠️ 13/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
-| 2026-10-01 | ⚠️ 5/6 | ⚠️ 12/15 | ⚠️ 15/16 | ⚠️ 13/16 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
