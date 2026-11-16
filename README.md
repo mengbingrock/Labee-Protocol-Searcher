@@ -563,13 +563,13 @@ Latest measured result (2026-09-18):
 <summary>View the detailed daily reliability record</summary>
 
 <!-- HEALTH:BEGIN -->
-_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-11-15T12:59Z** · probe query `PCR purification` (`EcoRI` for REBASE; `PCR` for Morimoto Lab)._
+_Measured automatically by [`scripts/health-check.mjs`](scripts/health-check.mjs), re-run daily by [the health workflow](.github/workflows/health.yml). Last run: **2026-11-16T13:52Z** · probe query `PCR purification` (`EcoRI` for REBASE; `PCR` for Morimoto Lab)._
 
 The scheduled run searches every declared protocol journal and vendor, then calls `fetch` for each source's top result. It additionally fetches every unique journal DOI returned by the sweep. Publisher search uses the AWS Browserless deployment first, except protocols.io uses its native API when configured and Morimoto Lab searches its public PDF catalog; this report shows when a scholarly or web database had to answer instead.
 
 ❌ **1 backend not answering:** `semanticscholar`. The chains fall through, so search still works as long as one provider per chain is up.
 
-⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `neb` (graded `full` but the site refused the request); `sigma-aldrich` (graded `none` but the page extracted fine); `emd-millipore` (graded `none` but the page extracted fine).
+⚠️ **Grade drift — re-check `fetchability` in `src/vendors.ts`:** `sigma-aldrich` (graded `none` but the page extracted fine); `emd-millipore` (graded `none` but the page extracted fine).
 
 **Backends**
 
@@ -596,7 +596,7 @@ The scheduled run searches every declared protocol journal and vendor, then call
 | `current-protocols` | ⚠️ fallback · `crossref+europepmc+openalex+pubmed` | ⚠️ partial | ✅ 10 | ⚠️ `abstract-only` · no public full text · Europe PMC abstract |
 | `thermofisher` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `ok` · html extraction |
 | `qiagen` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
-| `neb` | ⚠️ fallback · `brave` | ✅ full | ✅ 3 | ❌ `not-fetchable` · technical retrieval failure |
+| `neb` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `bio-rad` | ✅ AWS Browserless | ✅ full | ✅ 3 | ✅ `display-only-full-text` |
 | `sigma-aldrich` | ⚠️ fallback · `brave` | ❌ none | ✅ 3 | ✅ `display-only-full-text` |
 | `emd-millipore` | ⚠️ fallback · `brave` | ❌ none | ✅ 3 | ✅ `display-only-full-text` |
@@ -613,6 +613,7 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 
 | Date | Backends up | Publisher search | Sources with hits | Top result `fetch` ok | Down | Drift |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-16 | ⚠️ 5/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-11-15 | ⚠️ 5/6 | ⚠️ 11/16 | ⚠️ 16/17 | ⚠️ 13/17 | `semanticscholar` | `neb`, `sigma-aldrich`, `emd-millipore` |
 | 2026-11-14 | ⚠️ 5/6 | ⚠️ 13/16 | ⚠️ 16/17 | ⚠️ 13/17 | `semanticscholar` | `neb`, `sigma-aldrich`, `emd-millipore` |
 | 2026-11-13 | ✅ 6/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | — | `sigma-aldrich`, `emd-millipore` |
@@ -642,7 +643,6 @@ _A `partial` source showing `abstract-only`, `no-open-fulltext` or `may-not-fetc
 | 2026-10-20 | ⚠️ 5/6 | ⚠️ 11/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-19 | ⚠️ 5/6 | ⚠️ 11/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 | 2026-10-18 | ⚠️ 5/6 | ⚠️ 12/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
-| 2026-10-17 | ⚠️ 5/6 | ⚠️ 11/16 | ⚠️ 16/17 | ⚠️ 14/17 | `semanticscholar` | `sigma-aldrich`, `emd-millipore` |
 
 _One row per day, most recent first, last 30 days. Every run — including extra same-day ones — is kept in [`health-history.jsonl`](health-history.jsonl), which is where to look for a longer trend._
 <!-- HEALTH:END -->
